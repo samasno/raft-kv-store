@@ -11,22 +11,10 @@ type raftState uint8
 
 const (
 	raft_follower raftState = iota
+	raft_precandidate
 	raft_candidate
 	raft_leader
 )
-
-func raftStateString(s raftState) string {
-	switch s {
-	case raft_follower:
-		return "Follower"
-	case raft_candidate:
-		return "Candidate"
-	case raft_leader:
-		return "Leader"
-	}
-
-	return "Invalid State"
-}
 
 type RaftMessageType uint8
 
@@ -34,6 +22,8 @@ type RaftMessageType uint8
 const (
 	MESSAGE_APPEND RaftMessageType = iota
 	MESSAGE_APPEND_RESPONSE
+	MESSAGE_PREVOTE_REQUEST
+	MESSAGE_PREVOTE_RESPONSE
 	MESSAGE_VOTE_REQUEST
 	MESSAGE_VOTE_RESPONSE
 	MESSAGE_METADATA
@@ -49,16 +39,6 @@ const (
 	OUTPUT_COMMIT
 )
 
-type raftInternal interface {
-	call(RaftMessage)  // intake messages, update state
-	tick()             // advance clock, checks for election
-	ready() RaftOutput // reap outgoing messages into outbound struct, move to pending state
-	advance()          // reset state, commit any pending changes to struct
-}
-
-type raftCallFn func(m RaftMessage)
-type raftTickFn func()
-
 type Raft struct { // implements raftInternal interface
 	id           uint64
 	currentState raftState
@@ -67,12 +47,14 @@ type Raft struct { // implements raftInternal interface
 	mtx          *sync.Mutex // use if external dependencies come up
 	metadataFile RaftMetadataFile
 	logFile      RaftLogFile
+	peers        []uint64
 
 	call raftCallFn // use transtion functions to reset op pointers
 	tick raftTickFn
 
 	currentTerm uint64
 	votedFor    uint64
+	votes       uint64
 
 	electionTimeout uint64
 	electionElapsed uint64
@@ -86,27 +68,6 @@ type Raft struct { // implements raftInternal interface
 	outc     chan []RaftOutput
 	pending  []RaftOutput
 }
-
-/*
-start with follower state functions
-- pass messages with the call method
-- increment on ticks, steps, advance
-
-  - tick
-    increment appropriate counters, skeleton for checks
-    no output
-  - handleMessage
-    types still pending, probably just need append log for now, can do heart beats and logs
-    should append logs, 0 out election timeout
-    update log and commit indexes. needs storage for lastlog check
-    should should create an output for all messages for responses
-  - ready
-    reaps all logs (no batching for now) puts into pending state
-    should output entries for writing
-  - advance
-    confirms all pending states, updates last applied
-    outputs message if any logs were written
-*/
 
 func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Raft, error) {
 	if nil == md {
@@ -186,17 +147,43 @@ func (r *Raft) tickFollower() {
 	r.time++
 	r.electionElapsed++
 	if r.electionElapsed > r.electionTimeout {
-		r.resetElectionTimeout()
-		r.transitionCandidate()
+		r.transitionPrecandidate()
 		return
 	}
 }
 
+func (r *Raft) callPrecandidate(m RaftMessage) {
+
+}
+
+func (r *Raft) tickPrecandidate() {
+
+}
+
+func (r *Raft) transitionPrecandidate() {
+	// reset election timeout
+	// change state to precandidate
+	// update tick and call functions
+	// create prevote messages for all peers
+	//
+	r.resetElectionTimeout()
+	r.currentState = raft_precandidate
+}
+
 func (r *Raft) transitionCandidate() {
+	r.resetElectionTimeout()
+	// change state
 	r.currentState = raft_candidate
-	r.currentTerm++
 	r.call = r.callCandidate
 	r.tick = r.tickCandidate
+
+	// output := RaftOutput{
+	// 	Self:        true,
+	// 	Type:        OUTPUT_METADATA,
+	// 	VotedFor:    r.id,
+	// 	CurrentTerm: r.currentTerm + 1,
+	// }
+
 }
 
 func (r *Raft) callCandidate(m RaftMessage) {
@@ -312,3 +299,7 @@ type RaftMetadataFile interface {
 	CurrentTerm() uint64
 	VotedFor() uint64
 }
+
+type raftCallFn func(m RaftMessage)
+
+type raftTickFn func()
