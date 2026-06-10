@@ -44,18 +44,20 @@ func TestFollowerTicks(t *testing.T) {
 	assertEqual(t, "Election Elapsed", r.electionElapsed, 0)
 	assertEqual(t, "Voted For", r.votedFor, votedFor)
 	assertEqual(t, "Current Term", r.currentTerm, currentTerm)
-	assertEqual(t, "Last Log Index", r.lastApplied, lastLogIndex)
+	assertEqual(t, "Last Log Index", r.lastEntryIndex, lastLogIndex)
 	assert(t, r.electionTimeout > 9, "Election Timeout: Expected to be greater than 9")
 }
 
-func TestCallFollowerHeartBeat(t *testing.T) {
+func TestCallFollowerHeartBeatSameTerm(t *testing.T) {
 	// prep raft instance
 	// arbitrary ticks
 	// call a heartbeat with same leader - should update leader
-	// call a heartbeat with new
 	// update commit w/ output
 }
 
+func TestCallFollowerHeartBeatOldTerm(t *testing.T) {
+
+}
 func TestCallFollowerAppendEntriesWhenValid(t *testing.T) {}
 
 func TestCallFollowerAppendEntriesWrongIndex(t *testing.T) {}
