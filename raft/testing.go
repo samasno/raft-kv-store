@@ -1,6 +1,9 @@
 package raft
 
-import "errors"
+import (
+	"errors"
+	"testing"
+)
 
 // in memory testing assets for external dependencies
 func newInMemoryLogfile(entries []RaftEntry) *inMemoryLogFile {
@@ -70,4 +73,18 @@ func (ms *inMemoryMetadataFile) VotedFor() uint64 {
 func updateInMemoryMetadata(ms *inMemoryMetadataFile, term uint64, voteeId uint64) {
 	ms.currentTerm = term
 	ms.votedFor = voteeId
+}
+
+func assert(t *testing.T, condition bool, message string) {
+	t.Helper()
+	if !condition {
+		t.Error(message)
+	}
+}
+
+func assertEqual[T comparable](t *testing.T, name string, actual, expected T) {
+	t.Helper()
+	if actual != expected {
+		t.Errorf("%s: got %v, expected %v", name, actual, expected)
+	}
 }

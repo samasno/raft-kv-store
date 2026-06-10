@@ -40,7 +40,7 @@ func TestFollowerTicks(t *testing.T) {
 
 	r.Tick()
 
-	assertEqual(t, "State", raftStateString(r.currentState), raftStateString(raft_candidate))
+	assertEqual(t, "State", raftStateString(r.currentState), raftStateString(raft_precandidate))
 	assertEqual(t, "Election Elapsed", r.electionElapsed, 0)
 	assertEqual(t, "Voted For", r.votedFor, votedFor)
 	assertEqual(t, "Current Term", r.currentTerm, currentTerm)
@@ -48,16 +48,18 @@ func TestFollowerTicks(t *testing.T) {
 	assert(t, r.electionTimeout > 9, "Election Timeout: Expected to be greater than 9")
 }
 
-func assert(t *testing.T, condition bool, message string) {
-	t.Helper()
-	if !condition {
-		t.Error(message)
-	}
+func TestCallFollowerHeartBeat(t *testing.T) {
+	// prep raft instance
+	// arbitrary ticks
+	// call a heartbeat with same leader - should update leader
+	// call a heartbeat with new
+	// update commit w/ output
 }
 
-func assertEqual[T comparable](t *testing.T, name string, actual, expected T) {
-	t.Helper()
-	if actual != expected {
-		t.Errorf("%s: got %v, expected %v", name, actual, expected)
-	}
-}
+func TestCallFollowerAppendEntriesWhenValid(t *testing.T) {}
+
+func TestCallFollowerAppendEntriesWrongIndex(t *testing.T) {}
+
+func TestCallFollowerPrevote(t *testing.T) {}
+
+func TestCallFollowerVote(t *testing.T) {}
