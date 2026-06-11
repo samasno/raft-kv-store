@@ -2,52 +2,18 @@ package raft
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 	"sync"
-)
-
-type raftState uint8
-
-const (
-	raft_follower raftState = iota
-	raft_precandidate
-	raft_candidate
-	raft_leader
-)
-
-type RaftMessageType uint8
-
-// TODO better enumeration on serialized types
-const (
-	MESSAGE_APPEND RaftMessageType = iota
-	MESSAGE_APPEND_RESPONSE
-	MESSAGE_PREVOTE_REQUEST
-	MESSAGE_PREVOTE_RESPONSE
-	MESSAGE_VOTE_REQUEST
-	MESSAGE_VOTE_RESPONSE
-	MESSAGE_METADATA
-	MESSAGE_ENTRIES
-)
-
-type RaftOutputType uint8
-
-const (
-	OUTPUT_METADATA RaftOutputType = iota
-	OUTPUT_MESSAGE
-	OUTPUT_ENTRY
-	OUTPUT_COMMIT
 )
 
 type Raft struct { // implements raftInternal interface
 	id           uint64
 	currentState raftState
 	time         uint64
-	logs         []string
 	mtx          *sync.Mutex // use if external dependencies come up
 	metadataFile RaftMetadataFile
-	logFile      RaftLogFile
+	logFile      RaftLogFile // external read only source
 	peers        []uint64
+	leader       uint64
 
 	call raftCallFn // use transtion functions to reset op pointers
 	tick raftTickFn
@@ -59,14 +25,19 @@ type Raft struct { // implements raftInternal interface
 	electionTimeout uint64
 	electionElapsed uint64
 
-	lastApplied uint64
-	commitIndex uint64
+	commitIndex      uint64 // in memory only, get from leader
+	lastEntryIndex   uint64 // latest raft log written, update after advance
+	lastAppliedIndex uint64 // applied to host application up to commit index, update after advance
 
 	// leaderState raftLeaderState
 
-	outBound []RaftOutput
-	outc     chan []RaftOutput
-	pending  []RaftOutput
+	callc    chan RaftMessage
+	tickc    chan struct{}
+	readyc   chan *RaftOutput
+	advancec chan struct{}
+	donec    chan struct{}
+	outbound *RaftOutput
+	pending  *raftUpdate
 }
 
 func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Raft, error) {
@@ -85,12 +56,17 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 	r.currentState = raft_follower
 	r.mtx = &sync.Mutex{}
 	r.electionTimeout = randomTimeout(10, 20)
+	r.callc = make(chan RaftMessage)
+	r.tickc = make(chan struct{})
+	r.advancec = make(chan struct{})
+	r.donec = make(chan struct{})
+	r.readyc = make(chan *RaftOutput)
 
 	r.metadataFile = md
 	r.logFile = log
 
 	var err error
-	r.lastApplied, err = r.logFile.LastLogIndex()
+	r.lastEntryIndex, err = r.logFile.LastLogIndex()
 	if err != nil {
 		// log here
 		panic("Log file failure")
@@ -102,31 +78,66 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 	r.votedFor = r.metadataFile.VotedFor()
 	r.currentTerm = r.metadataFile.CurrentTerm()
 
+	go r.run()
+
 	return r, nil
 }
+
+func (r *Raft) run() {
+	for {
+		r.resetOutbound()
+
+		select {
+		case m := <-r.callc:
+			r.call(m)
+		case <-r.tickc:
+			r.tick()
+		case <-r.donec:
+			// graceful shutdown here
+			return
+		}
+
+		r.loadOutboundToReady()
+		<-r.advancec
+		r.advance()
+	}
+}
+
 func (r *Raft) Call(m RaftMessage) {
-	r.call(m)
+	r.callc <- m
 }
 
 func (r *Raft) Tick() {
-	r.tick()
+	r.tickc <- struct{}{}
+}
+
+func (r *Raft) Ready() <-chan *RaftOutput { // run in parent routine
+	return r.readyc
 }
 
 func (r *Raft) Advance() {
-	println("advance follower")
+	r.advancec <- struct{}{}
 }
 
-func (r *Raft) transitionFollower() {
-	// [TODO] if leader, close leader state, if candidate close candidate state
-	r.currentState = raft_follower
-	r.call = r.callFollower
-	r.tick = r.tickFollower
+func (r *Raft) advance() {
+	println("handled pending updates")
+}
+
+func (r *Raft) Done() {
+	r.donec <- struct{}{}
+}
+
+func (r *Raft) handleCycle(...any) {
+	r.resetOutbound()
+
 }
 
 func (r *Raft) callFollower(m RaftMessage) {
 	switch m.Type {
 	case MESSAGE_APPEND:
-		println("follower append entry")
+		r.followerAppendEntry(m)
+	case MESSAGE_PREVOTE_REQUEST:
+		println("follower handling prevote")
 	case MESSAGE_VOTE_REQUEST:
 		println("follower go vote request")
 	default:
@@ -135,8 +146,64 @@ func (r *Raft) callFollower(m RaftMessage) {
 }
 
 func (r *Raft) followerAppendEntry(m RaftMessage) {
-	// check index and term from last log, use storage
-	//
+	/*
+		check term
+			if term is higher, must generate a metadatafile output to update
+			if term is lower, must generate a failure message to sender. no further changes made
+			increment time
+
+			if term valid
+			reset electionElapsed to 0
+			update leader, volatile state, no security check
+			check log entries
+				// term can never be zero
+				// last index and term must match that reported from logfile, if not send a failure message
+				// if valid, generate output messages that are reaped by ready()
+
+			if term not valid, increment electionElapsed and check
+	*/
+	if m.Term < r.currentTerm {
+		// reject case
+		// generate failure response
+		r.tickFollower()
+		return
+	}
+
+	r.time++
+	r.electionElapsed = 0
+	r.leader = m.From
+
+	if m.Term > r.currentTerm {
+		update := RaftMetadataUpdate{CurrentTerm: m.Term}
+		r.addOutboundMetadataUpdate(update)
+	}
+
+	// lastLogIndex, err := r.logFile.LastLogIndex()
+	// if err != nil {
+	// 	// log here
+	// 	panic("Log file failure retrieving index")
+	// }
+
+	// lastLogTerm, err := r.logFile.LastLogTerm()
+	// if err != nil {
+	// 	// log here
+	// 	panic("Log file failure retrieving term")
+	// }
+
+	// for i, e := range m.Entries {
+	// 	println(i, e)
+	// 	//
+	// }
+
+	//generate success response
+	success := RaftMessage{
+		To:      r.leader,
+		From:    r.id,
+		Success: true,
+		Term:    r.currentTerm,
+	}
+
+	r.addOutboundMessage(success)
 }
 
 func (r *Raft) tickFollower() {
@@ -208,98 +275,71 @@ func (r *Raft) tickLeader() {
 	println("leader tick")
 }
 
-func (r *Raft) String() string {
-	out := strings.Builder{}
-	out.WriteString("*****Raft Instance*****\n")
-	out.WriteString(fmt.Sprintf("ID: %d\n", r.id))
-	out.WriteString(fmt.Sprintf("State: %s\n", raftStateString(r.currentState)))
-	out.WriteString(fmt.Sprintf("Term: %d\n", r.currentTerm))
-	out.WriteString(fmt.Sprintf("Voted For: %d\n", r.votedFor))
-	out.WriteString(fmt.Sprintf("Time: %d\n", r.time))
-	out.WriteString(fmt.Sprintf("Election Timeout: %d\n", r.electionTimeout))
-	out.WriteString(fmt.Sprintf("Election Elapsed: %d\n", r.electionElapsed))
-	out.WriteString(fmt.Sprintf("Last Log Index: %d\n", r.lastApplied))
-	out.WriteString(fmt.Sprintf("Log Count: %d\n", len(r.logs)))
-
-	return out.String()
-}
-
 func (r *Raft) resetElectionTimeout() {
 	r.electionElapsed = 0
 	r.electionTimeout = randomTimeout(10, 20)
 }
 
-type RaftMessage struct {
-	Type RaftMessageType
-
-	// Common
-	To   uint64
-	From uint64
-	Term uint64
-
-	// Append entry request
-	LeaderId         uint64
-	PreviousLogIndex uint64
-	PreviousLogTerm  uint64
-	LeaderCommit     uint64
-
-	Entries []RaftEntry
-
-	// Append entry response
-	Success bool
-
-	// Request vote
-	CandidateId  uint64
-	LastLogIndex uint64
-	LastLogTerm  uint64
-
-	// Voting response
-	VoteGranted bool
+func (r *Raft) loadOutboundToReady() {
+	r.pending = r.outbound.generateUpdate()
+	r.readyc <- r.outbound
 }
 
-type RaftEntry struct {
-	Index       uint64
-	Term        uint64
-	IsConfigLog bool
-	Payload     []byte
-}
-
-type ApplicationEntry struct {
-	Payload []byte
-}
-
-type RaftOutput struct {
-	Self            bool
-	Type            RaftOutputType
-	Messages        []RaftMessage
-	LogEntries      []RaftEntry
-	CommitedEntries []RaftEntry
-	VotedFor        uint64
-	CurrentTerm     uint64
-}
-
-type RaftConfig struct {
-	id uint64
-}
-
-func (rc RaftConfig) Validate() error {
-	if rc.id == 0 {
-		return errors.New("Raft id cannot be 0")
+func (r *Raft) addOutboundMessage(m RaftMessage) {
+	if nil == r.outbound {
+		r.resetOutbound()
 	}
 
-	return nil
+	if nil == r.outbound.SendMessages {
+		r.outbound.SendMessages = []RaftMessage{}
+	}
+
+	r.outbound.SendMessages = append(r.outbound.SendMessages, m)
 }
 
-type RaftLogFile interface {
-	LastLogIndex() (uint64, error)
-	LastLogTerm() (uint64, error)
+func (r *Raft) addOutboundMetadataUpdate(m RaftMetadataUpdate) {
+	if nil == r.outbound {
+		r.resetOutbound()
+	}
+
+	if nil == r.outbound.UpdateMetadata {
+		r.outbound.UpdateMetadata = []RaftMetadataUpdate{}
+	}
+
+	r.outbound.UpdateMetadata = append(r.outbound.UpdateMetadata, m)
 }
 
-type RaftMetadataFile interface {
-	CurrentTerm() uint64
-	VotedFor() uint64
+func (r *Raft) addOutboundApplyEntries(e RaftEntry) {
+	if nil == r.outbound {
+		r.resetOutbound()
+	}
+
+	if nil == r.outbound.ApplyEntries {
+		r.outbound.ApplyEntries = []RaftEntry{}
+	}
+
+	r.outbound.ApplyEntries = append(r.outbound.ApplyEntries, e)
 }
 
-type raftCallFn func(m RaftMessage)
+func (r *Raft) addOutboundWriteEntries(e RaftEntry) {
+	if nil == r.outbound {
+		r.resetOutbound()
+	}
 
-type raftTickFn func()
+	if nil == r.outbound.WriteLogEntries {
+		r.outbound.WriteLogEntries = []RaftEntry{}
+	}
+
+	r.outbound.WriteLogEntries = append(r.outbound.WriteLogEntries, e)
+}
+
+func (r *Raft) resetOutbound() {
+	ro := &RaftOutput{
+		UpdateMetadata:  []RaftMetadataUpdate{},
+		SendMessages:    []RaftMessage{},
+		WriteLogEntries: []RaftEntry{},
+		ApplyEntries:    []RaftEntry{},
+	}
+
+	r.outbound = ro
+}

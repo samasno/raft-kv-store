@@ -88,3 +88,32 @@ func assertEqual[T comparable](t *testing.T, name string, actual, expected T) {
 		t.Errorf("%s: got %v, expected %v", name, actual, expected)
 	}
 }
+
+func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
+	id := uint64(9)
+	votedFor := uint64(7)
+	currentTerm := uint64(22)
+	lastLogIndex := uint64(77)
+	startTime := uint64(100)
+
+	startingEntry := RaftEntry{
+		Index: lastLogIndex,
+		Term:  currentTerm,
+	}
+
+	startingLog := []RaftEntry{startingEntry}
+
+	mlog := newInMemoryLogfile(startingLog)
+
+	conf := RaftConfig{id}
+
+	mdata := newInMemoryMetadataFile(votedFor, currentTerm)
+
+	r, _ := NewRaftInstance(mdata, mlog, conf)
+
+	r.time = startTime
+
+	defaults := *r
+
+	return r, defaults, mdata, mlog
+}
