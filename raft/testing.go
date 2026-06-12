@@ -89,6 +89,16 @@ func assertEqual[T comparable](t *testing.T, name string, actual, expected T) {
 	}
 }
 
+func baseValidationCycleOutput(t *testing.T, output *RaftOutput, sendLen, mdataLen, entriesLen, applyLen int) {
+	t.Helper()
+
+	assert(t, nil != output, "Output is not nil")
+	assertEqual(t, "Messages to send", len(output.SendMessages), sendLen)
+	assertEqual(t, "Metadata updates", len(output.UpdateMetadata), mdataLen)
+	assertEqual(t, "Entries to write", len(output.WriteLogEntries), entriesLen)
+	assertEqual(t, "Entries to apply", len(output.ApplyEntries), applyLen)
+}
+
 func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	id := uint64(9)
 	votedFor := uint64(7)
