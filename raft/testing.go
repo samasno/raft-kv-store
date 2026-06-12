@@ -112,8 +112,33 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	r, _ := NewRaftInstance(mdata, mlog, conf)
 
 	r.time = startTime
+	r.leader = votedFor
 
 	defaults := *r
 
 	return r, defaults, mdata, mlog
+}
+
+func baselineAppendEntryTestMessage(r *Raft, mlog *inMemoryLogFile) RaftMessage {
+	m := RaftMessage{
+		Type:         MESSAGE_APPEND,
+		To:           r.id,
+		From:         r.leader,
+		Term:         r.currentTerm,
+		LeaderCommit: r.commitIndex,
+		LeaderId:     r.leader,
+		Entries:      nil,
+	}
+
+	m.PreviousLogIndex, _ = mlog.LastLogIndex()
+	m.PreviousLogTerm, _ = mlog.LastLogTerm()
+	return m
+}
+
+func cycleNTicks(r *Raft, n int) {
+	for i := 0; i < n; i++ {
+		r.Tick()
+		<-r.Ready()
+		r.Advance()
+	}
 }
