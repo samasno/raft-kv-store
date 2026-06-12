@@ -121,7 +121,16 @@ func (r *Raft) Advance() {
 }
 
 func (r *Raft) advance() {
+	if nil == r.pending {
+		return
+	}
 
+	r.currentTerm = max(r.currentTerm, r.pending.currentTerm)
+	r.lastAppliedIndex = max(r.lastAppliedIndex, r.pending.lastAppliedIndex)
+	r.lastEntryIndex = max(r.lastEntryIndex, r.pending.lastEntryIndex)
+	r.votedFor = max(r.votedFor, r.pending.votedFor)
+
+	r.pending = nil
 }
 
 func (r *Raft) Done() {
@@ -173,23 +182,18 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 		// must be in sync with leader before creating update
 	}
 
-	err := r.validatePreviousLogBeforeAppend(m.PreviousLogIndex, m.PreviousLogTerm)
+	err := r.validateEntriesBeforeAppend(m.PreviousLogIndex, m.PreviousLogTerm, m.Entries)
 	if err != nil {
 		r.addAppendEntryResponse(false, m.From)
 		return
 	}
 
-	// validate and process entries
-	// for i, e := range m.Entries {
-	// 	println(i, e)
-	// }
-
-	//generate success response
+	r.addOutboundWriteEntries(m.Entries)
 
 	r.addAppendEntryResponse(true, m.From)
 }
 
-func (r *Raft) validatePreviousLogBeforeAppend(index, term uint64) error {
+func (r *Raft) validateEntriesBeforeAppend(index, term uint64, entries []RaftEntry) error {
 	lastLogIndex, err := r.logFile.LastLogIndex()
 	if err != nil {
 		panic("Log file failure retrieving index")
@@ -206,6 +210,15 @@ func (r *Raft) validatePreviousLogBeforeAppend(index, term uint64) error {
 
 	if term != lastLogTerm {
 		return fmt.Errorf("Expected log term %d got %d", lastLogTerm, term)
+	}
+
+	if 0 == len(entries) {
+		return nil
+	}
+
+	err = validateEntriesAreSequential(index, term, entries)
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -245,29 +258,15 @@ func (r *Raft) tickPrecandidate() {
 }
 
 func (r *Raft) transitionPrecandidate() {
-	// reset election timeout
-	// change state to precandidate
-	// update tick and call functions
-	// create prevote messages for all peers
-	//
 	r.resetElectionTimeout()
 	r.currentState = raft_precandidate
 }
 
 func (r *Raft) transitionCandidate() {
 	r.resetElectionTimeout()
-	// change state
 	r.currentState = raft_candidate
 	r.call = r.callCandidate
 	r.tick = r.tickCandidate
-
-	// output := RaftOutput{
-	// 	Self:        true,
-	// 	Type:        OUTPUT_METADATA,
-	// 	VotedFor:    r.id,
-	// 	CurrentTerm: r.currentTerm + 1,
-	// }
-
 }
 
 func (r *Raft) callCandidate(m RaftMessage) {
@@ -326,7 +325,10 @@ func (r *Raft) addOutboundMetadataUpdate(m RaftMetadataUpdate) {
 	r.outbound.UpdateMetadata = append(r.outbound.UpdateMetadata, m)
 }
 
-func (r *Raft) addOutboundApplyEntries(e RaftEntry) {
+func (r *Raft) addOutboundApplyEntries(entries []RaftEntry) {
+	if 0 == len(entries) {
+		return
+	}
 	if nil == r.outbound {
 		r.resetOutbound()
 	}
@@ -335,19 +337,19 @@ func (r *Raft) addOutboundApplyEntries(e RaftEntry) {
 		r.outbound.ApplyEntries = []RaftEntry{}
 	}
 
-	r.outbound.ApplyEntries = append(r.outbound.ApplyEntries, e)
+	r.outbound.ApplyEntries = append(r.outbound.ApplyEntries, entries...)
 }
 
-func (r *Raft) addOutboundWriteEntries(e RaftEntry) {
+func (r *Raft) addOutboundWriteEntries(entries []RaftEntry) {
+	if 0 == len(entries) {
+		return
+	}
+
 	if nil == r.outbound {
 		r.resetOutbound()
 	}
 
-	if nil == r.outbound.WriteLogEntries {
-		r.outbound.WriteLogEntries = []RaftEntry{}
-	}
-
-	r.outbound.WriteLogEntries = append(r.outbound.WriteLogEntries, e)
+	r.outbound.WriteLogEntries = append(r.outbound.WriteLogEntries, entries...)
 }
 
 func (r *Raft) resetOutbound() {
