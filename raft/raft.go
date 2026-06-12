@@ -2,6 +2,7 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -85,7 +86,7 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 
 func (r *Raft) run() {
 	for {
-		r.resetOutbound()
+		r.outbound = nil
 
 		select {
 		case m := <-r.callc:
@@ -120,7 +121,7 @@ func (r *Raft) Advance() {
 }
 
 func (r *Raft) advance() {
-	println("handled pending updates")
+
 }
 
 func (r *Raft) Done() {
@@ -146,64 +147,80 @@ func (r *Raft) callFollower(m RaftMessage) {
 }
 
 func (r *Raft) followerAppendEntry(m RaftMessage) {
-	/*
-		check term
-			if term is higher, must generate a metadatafile output to update
-			if term is lower, must generate a failure message to sender. no further changes made
-			increment time
-
-			if term valid
-			reset electionElapsed to 0
-			update leader, volatile state, no security check
-			check log entries
-				// term can never be zero
-				// last index and term must match that reported from logfile, if not send a failure message
-				// if valid, generate output messages that are reaped by ready()
-
-			if term not valid, increment electionElapsed and check
-	*/
 	if m.Term < r.currentTerm {
-		// reject case
-		// generate failure response
+		r.addAppendEntryResponse(false, m.From)
 		r.tickFollower()
+		return
+	}
+
+	if m.LeaderId == 0 {
+		r.addAppendEntryResponse(false, m.From)
 		return
 	}
 
 	r.time++
 	r.electionElapsed = 0
-	r.leader = m.From
+	r.leader = m.LeaderId
+	r.commitIndex = max(r.commitIndex, m.LeaderCommit)
 
 	if m.Term > r.currentTerm {
 		update := RaftMetadataUpdate{CurrentTerm: m.Term}
 		r.addOutboundMetadataUpdate(update)
 	}
 
-	// lastLogIndex, err := r.logFile.LastLogIndex()
-	// if err != nil {
-	// 	// log here
-	// 	panic("Log file failure retrieving index")
-	// }
+	if r.commitIndex > r.lastAppliedIndex {
+		// create output to catch up commit index or latest written log
+		// must be in sync with leader before creating update
+	}
 
-	// lastLogTerm, err := r.logFile.LastLogTerm()
-	// if err != nil {
-	// 	// log here
-	// 	panic("Log file failure retrieving term")
-	// }
+	err := r.validatePreviousLogBeforeAppend(m.PreviousLogIndex, m.PreviousLogTerm)
+	if err != nil {
+		r.addAppendEntryResponse(false, m.From)
+		return
+	}
 
+	// validate and process entries
 	// for i, e := range m.Entries {
 	// 	println(i, e)
-	// 	//
 	// }
 
 	//generate success response
-	success := RaftMessage{
-		To:      r.leader,
+
+	r.addAppendEntryResponse(true, m.From)
+}
+
+func (r *Raft) validatePreviousLogBeforeAppend(index, term uint64) error {
+	lastLogIndex, err := r.logFile.LastLogIndex()
+	if err != nil {
+		panic("Log file failure retrieving index")
+	}
+
+	if index != lastLogIndex {
+		return fmt.Errorf("Expected log index %d got %d", lastLogIndex, index)
+	}
+
+	lastLogTerm, err := r.logFile.LastLogTerm()
+	if err != nil {
+		panic("Log file failure retrieving term")
+	}
+
+	if term != lastLogTerm {
+		return fmt.Errorf("Expected log term %d got %d", lastLogTerm, term)
+	}
+
+	return nil
+}
+
+func (r *Raft) addAppendEntryResponse(success bool, to uint64) {
+	failureMessage := RaftMessage{
+		Type:    MESSAGE_APPEND_RESPONSE,
+		To:      to,
 		From:    r.id,
-		Success: true,
+		Success: success,
 		Term:    r.currentTerm,
 	}
 
-	r.addOutboundMessage(success)
+	r.addOutboundMessage(failureMessage)
 }
 
 func (r *Raft) tickFollower() {
