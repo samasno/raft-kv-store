@@ -38,6 +38,25 @@ const (
 	MESSAGE_VOTE_RESPONSE
 )
 
+func (rm RaftMessageType) String() string {
+	switch rm {
+	case MESSAGE_APPEND:
+		return "MESSAGE_APPEND"
+	case MESSAGE_APPEND_RESPONSE:
+		return "MESSAGE_APPEND_RESPONSE"
+	case MESSAGE_PREVOTE_REQUEST:
+		return "MESSAGE_PREVOTE_REQUEST"
+	case MESSAGE_PREVOTE_RESPONSE:
+		return "MESSAGE_PREVOTE_RESPONSE"
+	case MESSAGE_VOTE_REQUEST:
+		return "MESSAGE_VOTE_REQUEST"
+	case MESSAGE_VOTE_RESPONSE:
+		return "MESSAGE_VOTE_RESPONSE"
+	}
+
+	return "INVALID MESSAGE"
+}
+
 type RaftMessage struct {
 	Type RaftMessageType
 
@@ -58,9 +77,9 @@ type RaftMessage struct {
 	Success bool
 
 	// Request vote
-	CandidateId  uint64
-	LastLogIndex uint64
-	LastLogTerm  uint64
+	CandidateId           uint64
+	CandidateLastLogIndex uint64
+	CandidateLastLogTerm  uint64
 
 	// Voting response
 	VoteGranted bool

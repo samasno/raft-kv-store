@@ -2,6 +2,7 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -85,7 +86,7 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 
 func (r *Raft) run() {
 	for {
-		r.resetOutbound()
+		r.outbound = nil
 
 		select {
 		case m := <-r.callc:
@@ -120,7 +121,16 @@ func (r *Raft) Advance() {
 }
 
 func (r *Raft) advance() {
-	println("handled pending updates")
+	if nil == r.pending {
+		return
+	}
+
+	r.currentTerm = max(r.currentTerm, r.pending.currentTerm)
+	r.lastAppliedIndex = max(r.lastAppliedIndex, r.pending.lastAppliedIndex)
+	r.lastEntryIndex = max(r.lastEntryIndex, r.pending.lastEntryIndex)
+	r.votedFor = max(r.votedFor, r.pending.votedFor)
+
+	r.pending = nil
 }
 
 func (r *Raft) Done() {
@@ -146,64 +156,84 @@ func (r *Raft) callFollower(m RaftMessage) {
 }
 
 func (r *Raft) followerAppendEntry(m RaftMessage) {
-	/*
-		check term
-			if term is higher, must generate a metadatafile output to update
-			if term is lower, must generate a failure message to sender. no further changes made
-			increment time
-
-			if term valid
-			reset electionElapsed to 0
-			update leader, volatile state, no security check
-			check log entries
-				// term can never be zero
-				// last index and term must match that reported from logfile, if not send a failure message
-				// if valid, generate output messages that are reaped by ready()
-
-			if term not valid, increment electionElapsed and check
-	*/
 	if m.Term < r.currentTerm {
-		// reject case
-		// generate failure response
+		r.addAppendEntryResponse(false, m.From)
 		r.tickFollower()
+		return
+	}
+
+	if m.LeaderId == 0 {
+		r.addAppendEntryResponse(false, m.From)
 		return
 	}
 
 	r.time++
 	r.electionElapsed = 0
-	r.leader = m.From
+	r.leader = m.LeaderId
+	r.commitIndex = max(r.commitIndex, m.LeaderCommit)
 
 	if m.Term > r.currentTerm {
 		update := RaftMetadataUpdate{CurrentTerm: m.Term}
 		r.addOutboundMetadataUpdate(update)
 	}
 
-	// lastLogIndex, err := r.logFile.LastLogIndex()
-	// if err != nil {
-	// 	// log here
-	// 	panic("Log file failure retrieving index")
-	// }
+	if r.commitIndex > r.lastAppliedIndex {
+		// create output to catch up commit index or latest written log
+		// must be in sync with leader before creating update
+	}
 
-	// lastLogTerm, err := r.logFile.LastLogTerm()
-	// if err != nil {
-	// 	// log here
-	// 	panic("Log file failure retrieving term")
-	// }
+	err := r.validateEntriesBeforeAppend(m.PreviousLogIndex, m.PreviousLogTerm, m.Entries)
+	if err != nil {
+		r.addAppendEntryResponse(false, m.From)
+		return
+	}
 
-	// for i, e := range m.Entries {
-	// 	println(i, e)
-	// 	//
-	// }
+	r.addOutboundWriteEntries(m.Entries)
 
-	//generate success response
-	success := RaftMessage{
-		To:      r.leader,
+	r.addAppendEntryResponse(true, m.From)
+}
+
+func (r *Raft) validateEntriesBeforeAppend(index, term uint64, entries []RaftEntry) error {
+	lastLogIndex, err := r.logFile.LastLogIndex()
+	if err != nil {
+		panic("Log file failure retrieving index")
+	}
+
+	if index != lastLogIndex {
+		return fmt.Errorf("Expected log index %d got %d", lastLogIndex, index)
+	}
+
+	lastLogTerm, err := r.logFile.LastLogTerm()
+	if err != nil {
+		panic("Log file failure retrieving term")
+	}
+
+	if term != lastLogTerm {
+		return fmt.Errorf("Expected log term %d got %d", lastLogTerm, term)
+	}
+
+	if 0 == len(entries) {
+		return nil
+	}
+
+	err = validateEntriesAreSequential(index, term, entries)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Raft) addAppendEntryResponse(success bool, to uint64) {
+	failureMessage := RaftMessage{
+		Type:    MESSAGE_APPEND_RESPONSE,
+		To:      to,
 		From:    r.id,
-		Success: true,
+		Success: success,
 		Term:    r.currentTerm,
 	}
 
-	r.addOutboundMessage(success)
+	r.addOutboundMessage(failureMessage)
 }
 
 func (r *Raft) tickFollower() {
@@ -228,29 +258,15 @@ func (r *Raft) tickPrecandidate() {
 }
 
 func (r *Raft) transitionPrecandidate() {
-	// reset election timeout
-	// change state to precandidate
-	// update tick and call functions
-	// create prevote messages for all peers
-	//
 	r.resetElectionTimeout()
 	r.currentState = raft_precandidate
 }
 
 func (r *Raft) transitionCandidate() {
 	r.resetElectionTimeout()
-	// change state
 	r.currentState = raft_candidate
 	r.call = r.callCandidate
 	r.tick = r.tickCandidate
-
-	// output := RaftOutput{
-	// 	Self:        true,
-	// 	Type:        OUTPUT_METADATA,
-	// 	VotedFor:    r.id,
-	// 	CurrentTerm: r.currentTerm + 1,
-	// }
-
 }
 
 func (r *Raft) callCandidate(m RaftMessage) {
@@ -309,7 +325,10 @@ func (r *Raft) addOutboundMetadataUpdate(m RaftMetadataUpdate) {
 	r.outbound.UpdateMetadata = append(r.outbound.UpdateMetadata, m)
 }
 
-func (r *Raft) addOutboundApplyEntries(e RaftEntry) {
+func (r *Raft) addOutboundApplyEntries(entries []RaftEntry) {
+	if 0 == len(entries) {
+		return
+	}
 	if nil == r.outbound {
 		r.resetOutbound()
 	}
@@ -318,19 +337,19 @@ func (r *Raft) addOutboundApplyEntries(e RaftEntry) {
 		r.outbound.ApplyEntries = []RaftEntry{}
 	}
 
-	r.outbound.ApplyEntries = append(r.outbound.ApplyEntries, e)
+	r.outbound.ApplyEntries = append(r.outbound.ApplyEntries, entries...)
 }
 
-func (r *Raft) addOutboundWriteEntries(e RaftEntry) {
+func (r *Raft) addOutboundWriteEntries(entries []RaftEntry) {
+	if 0 == len(entries) {
+		return
+	}
+
 	if nil == r.outbound {
 		r.resetOutbound()
 	}
 
-	if nil == r.outbound.WriteLogEntries {
-		r.outbound.WriteLogEntries = []RaftEntry{}
-	}
-
-	r.outbound.WriteLogEntries = append(r.outbound.WriteLogEntries, e)
+	r.outbound.WriteLogEntries = append(r.outbound.WriteLogEntries, entries...)
 }
 
 func (r *Raft) resetOutbound() {

@@ -89,6 +89,16 @@ func assertEqual[T comparable](t *testing.T, name string, actual, expected T) {
 	}
 }
 
+func baseValidationCycleOutput(t *testing.T, output *RaftOutput, sendLen, mdataLen, entriesLen, applyLen int) {
+	t.Helper()
+
+	assert(t, nil != output, "Output is not nil")
+	assertEqual(t, "Messages to send", len(output.SendMessages), sendLen)
+	assertEqual(t, "Metadata updates", len(output.UpdateMetadata), mdataLen)
+	assertEqual(t, "Entries to write", len(output.WriteLogEntries), entriesLen)
+	assertEqual(t, "Entries to apply", len(output.ApplyEntries), applyLen)
+}
+
 func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	id := uint64(9)
 	votedFor := uint64(7)
@@ -112,8 +122,33 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	r, _ := NewRaftInstance(mdata, mlog, conf)
 
 	r.time = startTime
+	r.leader = votedFor
 
 	defaults := *r
 
 	return r, defaults, mdata, mlog
+}
+
+func baselineAppendEntryTestMessage(r *Raft, mlog *inMemoryLogFile) RaftMessage {
+	m := RaftMessage{
+		Type:         MESSAGE_APPEND,
+		To:           r.id,
+		From:         r.leader,
+		Term:         r.currentTerm,
+		LeaderCommit: r.commitIndex,
+		LeaderId:     r.leader,
+		Entries:      nil,
+	}
+
+	m.PreviousLogIndex, _ = mlog.LastLogIndex()
+	m.PreviousLogTerm, _ = mlog.LastLogTerm()
+	return m
+}
+
+func cycleNTicks(r *Raft, n int) {
+	for i := 0; i < n; i++ {
+		r.Tick()
+		<-r.Ready()
+		r.Advance()
+	}
 }
