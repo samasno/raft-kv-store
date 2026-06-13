@@ -182,18 +182,10 @@ func TestCallFollowerAppendEntriesWriteEntries(t *testing.T) {
 }
 
 func TestCallFollowerAppendEntriesApplyEntries(t *testing.T) {
-	// cases
-	// no new logs, just commit index incremented
-	// commit index goes up to last log, needs write logs then apply commit
-	// commit index goes partially to last log, stops at lastEntryIndex
-	// setup raft
 	r, defaults, _, mlog := setupRaftTest()
-	// apply existing log
-	// lower commit & applied
-	// call message with higher commit and advance
-	// output should create n apply entries message, must be sequential, first index is 1 after original last applied
 	msga := baselineAppendEntryTestMessage(r, mlog)
 
+	println(len(mlog.log))
 	appliedDiff := uint64(50)
 	r.commitIndex = r.commitIndex - appliedDiff
 	r.lastAppliedIndex = r.lastAppliedIndex - appliedDiff
@@ -205,14 +197,12 @@ func TestCallFollowerAppendEntriesApplyEntries(t *testing.T) {
 	r.Advance()
 
 	baseValidationCycleOutput(t, output, 1, 0, 0, int(appliedDiff))
-	// success message
 	sendmsg := output.SendMessages[0]
 	assert(t, sendmsg.Success, "Should be message")
 	assertEqual(t, "Commit index was updated", r.commitIndex, defaults.commitIndex)
 	assertEqual(t, "Applied index was updated", r.lastAppliedIndex, defaults.lastAppliedIndex)
 	err := validateEntriesAreSequential(indexBeforeCall, termBeforeCall, output.ApplyEntries)
 	assert(t, err == nil, "Apply entries is sequential")
-	// should be 50 sequential
 }
 
 func TestCallFollowerPrevoteResponse(t *testing.T) {}

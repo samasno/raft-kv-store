@@ -177,11 +177,9 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 		r.addOutboundMetadataUpdate(update)
 	}
 
-	if r.commitIndex > r.lastAppliedIndex {
-		// create output to catch up commit index or latest written log
-		// must be in sync with leader before creating update
-	}
+	r.applyCommittedEntries()
 
+	// must be in sync with leader before creating update
 	err := r.validateEntriesBeforeAppend(m.PreviousLogIndex, m.PreviousLogTerm, m.Entries)
 	if err != nil {
 		r.addAppendEntryResponse(false, m.From)
@@ -191,6 +189,31 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 	r.addOutboundWriteEntries(m.Entries)
 
 	r.addAppendEntryResponse(true, m.From)
+}
+
+func (r *Raft) applyCommittedEntries() {
+	if r.lastAppliedIndex == r.commitIndex {
+		return
+	}
+
+	startIndex := r.lastAppliedIndex
+	endIndex := min(r.commitIndex, r.lastEntryIndex)
+
+	entries, err := r.logFile.GetEntries(startIndex, endIndex)
+	if err != nil {
+		msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
+		panic(msg)
+	}
+
+	// err = validateEntriesAreSequential(startIndex, entries[0].Term, entries)
+	// println("start index", startIndex)
+	// println("entry 0 index/term", entries[0].Index, entries[0].Term)
+	// if err != nil {
+	// 	msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
+	// 	panic(msg)
+	// }
+
+	r.addOutboundApplyEntries(entries)
 }
 
 func (r *Raft) validateEntriesBeforeAppend(index, term uint64, entries []RaftEntry) error {
