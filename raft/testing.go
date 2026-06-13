@@ -2,6 +2,7 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -46,7 +47,16 @@ func (ms *inMemoryLogFile) LastLogTerm() (uint64, error) {
 	return lastLog.Term, nil
 }
 
-func appendRaftEntries(ms *inMemoryLogFile, entries []RaftEntry) {
+func (ms *inMemoryLogFile) GetEntries(startIndex, endIndex uint64) ([]RaftEntry, error) {
+	if int(endIndex) > len(ms.log) {
+		return nil, fmt.Errorf("Range requested exceeds last entry in log: %d-%d", startIndex, endIndex)
+	}
+
+	entries := ms.log[startIndex:endIndex]
+	return entries, nil
+}
+
+func (ms *inMemoryLogFile) appendRaftEntries(entries []RaftEntry) {
 	ms.log = append(ms.log, entries...)
 }
 
@@ -108,20 +118,18 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	termTwo := generateNEntries(100, 100, 2)
 	termThree := generateNEntries(100, 200, 3)
 
-	startingLog := append([]RaftEntry{}, termOne...)
-	startingLog = append(startingLog, termTwo...)
-	startingLog = append(startingLog, termThree...)
+	mlog := newInMemoryLogfile([]RaftEntry{})
+	mlog.appendRaftEntries(termOne)
+	mlog.appendRaftEntries(termTwo)
+	mlog.appendRaftEntries(termThree)
 
-	err := validateEntriesAreSequential(0, 1, startingLog)
+	err := validateAppendEntriesAreSequential(0, 1, mlog.log)
 	if err != nil {
 		println(err.Error())
 		return nil, Raft{}, nil, nil
 	}
 
-	mlog := newInMemoryLogfile(startingLog)
-
 	conf := RaftConfig{id}
-
 	mdata := newInMemoryMetadataFile(votedFor, 3)
 
 	r, _ := NewRaftInstance(mdata, mlog, conf)
