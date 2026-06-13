@@ -205,13 +205,11 @@ func (r *Raft) applyCommittedEntries() {
 		panic(msg)
 	}
 
-	// err = validateEntriesAreSequential(startIndex, entries[0].Term, entries)
-	// println("start index", startIndex)
-	// println("entry 0 index/term", entries[0].Index, entries[0].Term)
-	// if err != nil {
-	// 	msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
-	// 	panic(msg)
-	// }
+	err = validateEntriesAreSequential(startIndex, entries[0].Term, entries)
+	if err != nil {
+		msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
+		panic(msg)
+	}
 
 	r.addOutboundApplyEntries(entries)
 }
