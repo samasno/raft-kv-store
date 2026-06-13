@@ -185,7 +185,6 @@ func TestCallFollowerAppendEntriesApplyEntries(t *testing.T) {
 	r, defaults, _, mlog := setupRaftTest()
 	msga := baselineAppendEntryTestMessage(r, mlog)
 
-	println(len(mlog.log))
 	appliedDiff := uint64(50)
 	r.commitIndex = r.commitIndex - appliedDiff
 	r.lastAppliedIndex = r.lastAppliedIndex - appliedDiff
