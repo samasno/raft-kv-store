@@ -123,7 +123,7 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	mlog.appendRaftEntries(termTwo)
 	mlog.appendRaftEntries(termThree)
 
-	err := validateAppendEntriesAreSequential(0, 1, mlog.log)
+	err := validateEntriesAreSequential(0, 1, mlog.log)
 	if err != nil {
 		println(err.Error())
 		return nil, Raft{}, nil, nil
