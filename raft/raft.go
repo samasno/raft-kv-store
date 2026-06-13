@@ -158,7 +158,6 @@ func (r *Raft) callFollower(m RaftMessage) {
 func (r *Raft) followerAppendEntry(m RaftMessage) {
 	if m.Term < r.currentTerm {
 		r.addAppendEntryResponse(false, m.From)
-		r.tickFollower()
 		return
 	}
 

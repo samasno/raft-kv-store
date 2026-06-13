@@ -92,7 +92,7 @@ func TestCallFollowerHeartbeatOldTermLeader(t *testing.T) {
 	output := <-r.Ready()
 	r.Advance()
 
-	assertEqual(t, "Election elapsed to increase", r.electionElapsed, uint64(n+1))
+	assertEqual(t, "Election elapsed to increase", r.electionElapsed, uint64(n))
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
 
 	failure := output.SendMessages[0]
