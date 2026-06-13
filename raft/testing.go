@@ -102,27 +102,37 @@ func baseValidationCycleOutput(t *testing.T, output *RaftOutput, sendLen, mdataL
 func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	id := uint64(9)
 	votedFor := uint64(7)
-	currentTerm := uint64(22)
-	lastLogIndex := uint64(77)
 	startTime := uint64(100)
 
-	startingEntry := RaftEntry{
-		Index: lastLogIndex,
-		Term:  currentTerm,
-	}
+	termOne := generateNEntries(100, 0, 1)
+	termTwo := generateNEntries(100, 100, 2)
+	termThree := generateNEntries(100, 200, 3)
 
-	startingLog := []RaftEntry{startingEntry}
+	startingLog := append([]RaftEntry{}, termOne...)
+	startingLog = append(startingLog, termTwo...)
+	startingLog = append(startingLog, termThree...)
+
+	err := validateEntriesAreSequential(0, 1, startingLog)
+	if err != nil {
+		println(err.Error())
+		return nil, Raft{}, nil, nil
+	}
 
 	mlog := newInMemoryLogfile(startingLog)
 
 	conf := RaftConfig{id}
 
-	mdata := newInMemoryMetadataFile(votedFor, currentTerm)
+	mdata := newInMemoryMetadataFile(votedFor, 3)
 
 	r, _ := NewRaftInstance(mdata, mlog, conf)
 
 	r.time = startTime
 	r.leader = votedFor
+	lastLog, _ := mlog.LastLogIndex()
+	r.lastEntryIndex = lastLog
+	r.lastAppliedIndex = lastLog
+	r.commitIndex = lastLog
+	r.currentTerm, _ = mlog.LastLogTerm()
 
 	defaults := *r
 
@@ -151,4 +161,22 @@ func cycleNTicks(r *Raft, n int) {
 		<-r.Ready()
 		r.Advance()
 	}
+}
+
+// for appending to a log. starts at prevIndex + 1
+func generateNEntries(count, prevIndex, startTerm uint64) []RaftEntry {
+	output := []RaftEntry{}
+
+	for i := range count {
+		inc := i + 1
+		entry := RaftEntry{
+			Index:   prevIndex + inc,
+			Term:    startTerm,
+			Payload: make([]byte, 20),
+		}
+
+		output = append(output, entry)
+	}
+
+	return output
 }

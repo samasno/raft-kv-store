@@ -14,6 +14,7 @@ func randomTimeout(min, max int) uint64 {
 func validateEntriesAreSequential(prevIndex, prevTerm uint64, entries []RaftEntry) error {
 	i := prevIndex
 	t := prevTerm
+
 	for _, entry := range entries {
 		if i+1 != entry.Index {
 			return fmt.Errorf("Non-sequential index found at index:%d term: %d", entry.Index, entry.Term)

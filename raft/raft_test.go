@@ -155,9 +155,65 @@ func TestCallFollowerAppendEntriesWrongIndex(t *testing.T) {
 	assertEqual(t, "Incorrect term fails", termFail.Success, false)
 }
 
-func TestCallFollowerAppendEntriesWriteEntries(t *testing.T) {}
+func TestCallFollowerAppendEntriesWriteEntries(t *testing.T) {
+	r, defaults, _, mlog := setupRaftTest()
 
-func TestCallFollowerAppendEntriesApplyEntries(t *testing.T) {}
+	entries := generateNEntries(10, r.lastEntryIndex, r.currentTerm)
+
+	msg := baselineAppendEntryTestMessage(r, mlog)
+
+	msg.Entries = entries
+
+	r.Call(msg)
+	output := <-r.Ready()
+	r.Advance()
+
+	assert(t, nil != output, "Output is not nil")
+	baseValidationCycleOutput(t, output, 1, 0, len(entries), 0)
+
+	response := output.SendMessages[0]
+	assertEqual(t, "Response is successful", response.Success, true)
+	err := validateEntriesAreSequential(defaults.lastEntryIndex, defaults.currentTerm, output.WriteLogEntries)
+	if err != nil {
+		t.Error(err.Error())
+	}
+
+	assertEqual(t, "Last entry index should update", r.lastEntryIndex, defaults.lastEntryIndex+uint64(len(entries)))
+}
+
+func TestCallFollowerAppendEntriesApplyEntries(t *testing.T) {
+	// cases
+	// no new logs, just commit index incremented
+	// commit index goes up to last log, needs write logs then apply commit
+	// commit index goes partially to last log, stops at lastEntryIndex
+	// setup raft
+	r, defaults, _, mlog := setupRaftTest()
+	// apply existing log
+	// lower commit & applied
+	// call message with higher commit and advance
+	// output should create n apply entries message, must be sequential, first index is 1 after original last applied
+	msga := baselineAppendEntryTestMessage(r, mlog)
+
+	appliedDiff := uint64(50)
+	r.commitIndex = r.commitIndex - appliedDiff
+	r.lastAppliedIndex = r.lastAppliedIndex - appliedDiff
+	indexBeforeCall := r.lastAppliedIndex
+	termBeforeCall := r.currentTerm
+
+	r.Call(msga)
+	output := <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, int(appliedDiff))
+	// success message
+	sendmsg := output.SendMessages[0]
+	assert(t, sendmsg.Success, "Should be message")
+	assertEqual(t, "Commit index was updated", r.commitIndex, defaults.commitIndex)
+	assertEqual(t, "Applied index was updated", r.lastAppliedIndex, defaults.lastAppliedIndex)
+	err := validateEntriesAreSequential(indexBeforeCall, termBeforeCall, output.ApplyEntries)
+	assert(t, err == nil, "Apply entries is sequential")
+	// should be 50 sequential
+}
 
 func TestCallFollowerPrevoteResponse(t *testing.T) {}
 
