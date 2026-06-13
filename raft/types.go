@@ -164,6 +164,7 @@ func (rc RaftConfig) Validate() error {
 type RaftLogFile interface {
 	LastLogIndex() (uint64, error)
 	LastLogTerm() (uint64, error)
+	GetEntries(uint64, uint64) ([]RaftEntry, error)
 }
 
 type RaftMetadataFile interface {
