@@ -204,6 +204,124 @@ func TestCallFollowerAppendEntriesApplyEntries(t *testing.T) {
 	assert(t, err == nil, "Apply entries is sequential")
 }
 
-func TestCallFollowerPrevoteResponse(t *testing.T) {}
+func TestCallFollowerPrevoteResponse(t *testing.T) {
+	// follower sends prevote success if it's within prevote window (electionTimeout - 5)
+	// prevote term assumed to be currentTerm + 1
+	// ACCEPT EQUAL TERM
+	r, defaults, _, mlog := setupRaftTest()
 
-func TestCallFollowerVote(t *testing.T) {}
+	msg := baselineAppendEntryTestMessage(r, mlog)
+
+	msg.Type = MESSAGE_PREVOTE_REQUEST
+	msg.PreviousLogIndex = defaults.lastEntryIndex
+	msg.PreviousLogTerm = defaults.currentTerm
+
+	r.electionTimeout = 10
+
+	cycleNTicks(r, 6)
+
+	r.Call(msg)
+	output := <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+
+	prevote := output.SendMessages[0]
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Prevote is granted for equal term and index", prevote.VoteGranted, true)
+
+	// ACCEPT LATER TERM
+
+	msg.PreviousLogTerm = defaults.currentTerm + 1
+	r.Call(msg)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+
+	prevote = output.SendMessages[0]
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Prevote is granted for greater term", prevote.VoteGranted, true)
+
+	// REJECT LOWER LOG INDEX
+	msg.PreviousLogTerm = defaults.currentTerm
+	msg.PreviousLogIndex = defaults.lastEntryIndex - 1
+	r.Call(msg)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+
+	prevote = output.SendMessages[0]
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Prevote is rejected for lower log index", prevote.VoteGranted, false)
+	// REJECT LOWER TERM
+	msg.PreviousLogTerm = defaults.currentTerm
+	msg.PreviousLogIndex = defaults.lastEntryIndex - 1
+	r.Call(msg)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+
+	prevote = output.SendMessages[0]
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Prevote is rejected for lower log index", prevote.VoteGranted, false)
+}
+
+func TestCallFollowerVote(t *testing.T) {
+	// REJECTS LOWER TERM
+	r, defaults, _, mlog := setupRaftTest()
+
+	novotereq := baselineAppendEntryTestMessage(r, mlog)
+
+	novotereq.Type = MESSAGE_VOTE_REQUEST
+	novotereq.PreviousLogIndex = defaults.lastEntryIndex
+	novotereq.PreviousLogTerm = defaults.currentTerm - 1
+
+	r.Call(novotereq)
+	output := <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+
+	prevote := output.SendMessages[0]
+	assertEqual(t, "Sends vote response", prevote.Type.String(), MESSAGE_VOTE_RESPONSE.String())
+	assertEqual(t, "Vote is rejected for lower term", prevote.VoteGranted, false)
+	assertEqual(t, "Term is not updated", r.currentTerm, defaults.currentTerm)
+
+	// REJECT LOWER INDEX
+
+	novotereq.Type = MESSAGE_VOTE_REQUEST
+	novotereq.PreviousLogIndex = defaults.lastEntryIndex - 2
+	novotereq.PreviousLogTerm = defaults.currentTerm
+
+	r.Call(novotereq)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+
+	prevote = output.SendMessages[0]
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_VOTE_RESPONSE.String())
+	assertEqual(t, "Prevote is rejected for lower index", prevote.VoteGranted, false)
+	assertEqual(t, "Term is not updated", r.currentTerm, defaults.currentTerm)
+
+	// GRANT VOTE HIGHER TERM
+	votereq := baselineAppendEntryTestMessage(r, mlog)
+	votereq.CandidateId = 999
+	votereq.Type = MESSAGE_VOTE_REQUEST
+	votereq.Term = defaults.currentTerm + 1
+	r.Call(votereq)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 1, 0, 0)
+
+	vote := output.SendMessages[0]
+	assertEqual(t, "Sends vote response", vote.Type.String(), MESSAGE_VOTE_RESPONSE.String())
+	assertEqual(t, "Vote is granted to higher term", vote.VoteGranted, true)
+	assertEqual(t, "Term is updated", r.currentTerm, votereq.Term)
+	assertEqual(t, "Leader id is updated", r.leader, votereq.CandidateId)
+	assertEqual(t, "Node must be in follower state", r.currentState.String(), raft_follower.String())
+}
