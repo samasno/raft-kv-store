@@ -53,8 +53,8 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 	}
 
 	r := &Raft{}
+	r.transitionFollower()
 	r.id = conf.id
-	r.currentState = raft_follower
 	r.mtx = &sync.Mutex{}
 	r.electionTimeout = randomTimeout(10, 20)
 	r.callc = make(chan RaftMessage)
@@ -72,9 +72,6 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 		// log here
 		panic("Log file failure")
 	}
-
-	r.call = r.callFollower
-	r.tick = r.tickFollower
 
 	r.votedFor = r.metadataFile.VotedFor()
 	r.currentTerm = r.metadataFile.CurrentTerm()
@@ -129,12 +126,35 @@ func (r *Raft) advance() {
 	r.lastAppliedIndex = max(r.lastAppliedIndex, r.pending.lastAppliedIndex)
 	r.lastEntryIndex = max(r.lastEntryIndex, r.pending.lastEntryIndex)
 	r.votedFor = max(r.votedFor, r.pending.votedFor)
-
+	if 0 != r.votedFor {
+		r.leader = r.votedFor
+	}
 	r.pending = nil
 }
 
 func (r *Raft) Done() {
 	r.donec <- struct{}{}
+}
+
+// FOLLOWER STATE CALLS
+
+func (r *Raft) transitionFollower() {
+	r.currentState = raft_follower
+	r.tick = r.tickFollower
+	r.call = r.callFollower
+}
+
+func (r *Raft) tickFollower() {
+	if r.currentState != raft_follower {
+		// log here exact state transition
+		panic("Raft: tickFollower called from invalid state")
+	}
+	r.time++
+	r.electionElapsed++
+	if r.electionElapsed > r.electionTimeout {
+		r.transitionPrecandidate()
+		return
+	}
 }
 
 func (r *Raft) callFollower(m RaftMessage) {
@@ -161,7 +181,6 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 		return
 	}
 
-	r.time++
 	r.electionElapsed = 0
 	r.leader = m.LeaderId
 	r.commitIndex = max(r.commitIndex, m.LeaderCommit)
@@ -190,6 +209,11 @@ func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
 		return
 	}
 
+	if 0 == m.CandidateId {
+		r.addPrevoteResponseToOutput(false, m.From)
+		return
+	}
+
 	if r.currentTerm > m.PreviousLogTerm {
 		r.addPrevoteResponseToOutput(false, m.From)
 		return
@@ -208,6 +232,122 @@ func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
 	r.addPrevoteResponseToOutput(false, m.From)
 }
 
+// PRECANDIDATE
+
+func (r *Raft) callPrecandidate(m RaftMessage) {
+	switch m.Type {
+	case MESSAGE_PREVOTE_RESPONSE:
+		r.precandidateReceivePrevoteResponse(m)
+	case MESSAGE_APPEND:
+		r.precandidateAppendEntry(m)
+	case MESSAGE_VOTE_REQUEST:
+		r.handleVoteRequest(m)
+	default:
+		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+	}
+}
+
+func (r *Raft) precandidateReceivePrevoteResponse(m RaftMessage) {
+	// if a rejected vote, return
+	if !m.VoteGranted {
+		return
+	}
+
+	r.votes++
+
+	if r.votes > uint64(len(r.peers)/2) {
+		r.transitionCandidate()
+	}
+}
+
+func (r *Raft) precandidateAppendEntry(m RaftMessage) {
+	if r.currentTerm > m.Term {
+		r.addAppendEntryResponse(false, m.From)
+	}
+
+	r.transitionFollower()
+	r.callFollower(m)
+}
+
+func (r *Raft) tickPrecandidate() {
+	if r.currentState != raft_precandidate {
+		// log here exact state transition
+		panic("Raft: tickPrecandidate called from invalid state")
+	}
+	r.time++
+	r.electionElapsed++
+	if r.electionElapsed > r.electionTimeout {
+		r.transitionPrecandidate()
+		return
+	}
+}
+
+func (r *Raft) transitionPrecandidate() {
+	r.resetElectionTimeout()
+	r.currentState = raft_precandidate
+	r.call = r.callPrecandidate
+	r.tick = r.tickPrecandidate
+	r.sendPrecandidateCampaign()
+}
+
+func (r *Raft) sendPrecandidateCampaign() {
+	messages := r.generateBroadcastMessages(MESSAGE_PREVOTE_REQUEST)
+	r.addOutboundMessage(messages...)
+}
+
+func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMessage {
+	output := []RaftMessage{}
+
+	for _, to := range r.peers {
+		msg := genericRaftMessage(messageType, r.id, to)
+		switch messageType {
+		case MESSAGE_PREVOTE_REQUEST, MESSAGE_VOTE_REQUEST:
+			msg.CandidateId = r.id
+			msg.Term = r.currentTerm
+			msg.PreviousLogIndex = r.lastEntryIndex
+			msg.PreviousLogTerm = r.currentTerm
+		}
+
+		output = append(output, msg)
+	}
+
+	return output
+}
+
+// CANDIDATE
+func (r *Raft) transitionCandidate() {
+	r.resetElectionTimeout()
+	r.currentState = raft_candidate
+	r.call = r.callCandidate
+	r.tick = r.tickCandidate
+}
+
+func (r *Raft) callCandidate(m RaftMessage) {
+	println("candidate call")
+}
+
+func (r *Raft) tickCandidate() {
+	println("candidate tick")
+}
+
+// LEADER
+
+func (r *Raft) transitionLeader() {
+	r.currentState = raft_leader
+	r.call = r.callLeader
+	r.tick = r.tickLeader
+}
+
+func (r *Raft) callLeader(m RaftMessage) {
+	println("leader call")
+}
+
+func (r *Raft) tickLeader() {
+	println("leader tick")
+}
+
+// HELPERS
+
 func (r *Raft) handleVoteRequest(m RaftMessage) {
 	if r.currentTerm >= m.Term || r.lastEntryIndex > m.PreviousLogIndex {
 		r.addVoteResponseToOutput(false, m.From)
@@ -217,11 +357,6 @@ func (r *Raft) handleVoteRequest(m RaftMessage) {
 	r.addOutboundMetadataUpdate(RaftMetadataUpdate{VotedFor: m.CandidateId, CurrentTerm: m.Term})
 	r.addVoteResponseToOutput(true, m.From)
 	r.transitionFollower()
-	r.leader = m.CandidateId
-}
-
-func (r *Raft) transitionFollower() {
-	r.currentState = raft_follower
 }
 
 func (r *Raft) applyCommittedEntries() {
@@ -298,62 +433,8 @@ func (r *Raft) addResponseToOutput(msgType RaftMessageType, success bool, voteGr
 	r.addOutboundMessage(msg)
 }
 
-func (r *Raft) tickFollower() {
-	if r.currentState != raft_follower {
-		// log here exact state transition
-		panic("Raft: tickFollower called from invalid state")
-	}
-	r.time++
-	r.electionElapsed++
-	if r.electionElapsed > r.electionTimeout {
-		r.transitionPrecandidate()
-		return
-	}
-}
-
-func (r *Raft) callPrecandidate(m RaftMessage) {
-
-}
-
-func (r *Raft) tickPrecandidate() {
-
-}
-
-func (r *Raft) transitionPrecandidate() {
-	r.resetElectionTimeout()
-	r.currentState = raft_precandidate
-}
-
-func (r *Raft) transitionCandidate() {
-	r.resetElectionTimeout()
-	r.currentState = raft_candidate
-	r.call = r.callCandidate
-	r.tick = r.tickCandidate
-}
-
-func (r *Raft) callCandidate(m RaftMessage) {
-	println("candidate call")
-}
-
-func (r *Raft) tickCandidate() {
-	println("candidate tick")
-}
-
-func (r *Raft) transitionLeader() {
-	r.currentState = raft_leader
-	r.call = r.callLeader
-	r.tick = r.tickLeader
-}
-
-func (r *Raft) callLeader(m RaftMessage) {
-	println("leader call")
-}
-
-func (r *Raft) tickLeader() {
-	println("leader tick")
-}
-
 func (r *Raft) resetElectionTimeout() {
+	r.votes = 0
 	r.electionElapsed = 0
 	r.electionTimeout = randomTimeout(10, 20)
 }
@@ -363,7 +444,7 @@ func (r *Raft) loadOutboundToReady() {
 	r.readyc <- r.outbound
 }
 
-func (r *Raft) addOutboundMessage(m RaftMessage) {
+func (r *Raft) addOutboundMessage(m ...RaftMessage) {
 	if nil == r.outbound {
 		r.resetOutbound()
 	}
@@ -372,7 +453,7 @@ func (r *Raft) addOutboundMessage(m RaftMessage) {
 		r.outbound.SendMessages = []RaftMessage{}
 	}
 
-	r.outbound.SendMessages = append(r.outbound.SendMessages, m)
+	r.outbound.SendMessages = append(r.outbound.SendMessages, m...)
 }
 
 func (r *Raft) addOutboundMetadataUpdate(m RaftMetadataUpdate) {
