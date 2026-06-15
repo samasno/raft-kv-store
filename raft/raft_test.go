@@ -215,6 +215,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	msg.Type = MESSAGE_PREVOTE_REQUEST
 	msg.PreviousLogIndex = defaults.lastEntryIndex
 	msg.PreviousLogTerm = defaults.currentTerm
+	msg.CandidateId = 1
 
 	r.electionTimeout = 10
 
@@ -233,6 +234,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	// ACCEPT LATER TERM
 
 	msg.PreviousLogTerm = defaults.currentTerm + 1
+	msg.CandidateId = 1
 	r.Call(msg)
 	output = <-r.Ready()
 	r.Advance()
@@ -246,6 +248,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	// REJECT LOWER LOG INDEX
 	msg.PreviousLogTerm = defaults.currentTerm
 	msg.PreviousLogIndex = defaults.lastEntryIndex - 1
+	msg.CandidateId = 1
 	r.Call(msg)
 	output = <-r.Ready()
 	r.Advance()
@@ -255,9 +258,12 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	prevote = output.SendMessages[0]
 	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
 	assertEqual(t, "Prevote is rejected for lower log index", prevote.VoteGranted, false)
+
 	// REJECT LOWER TERM
 	msg.PreviousLogTerm = defaults.currentTerm
 	msg.PreviousLogIndex = defaults.lastEntryIndex - 1
+	msg.CandidateId = 1
+
 	r.Call(msg)
 	output = <-r.Ready()
 	r.Advance()
@@ -276,6 +282,7 @@ func TestCallFollowerVote(t *testing.T) {
 	novotereq := baselineAppendEntryTestMessage(r, mlog)
 
 	novotereq.Type = MESSAGE_VOTE_REQUEST
+	novotereq.CandidateId = 999
 	novotereq.PreviousLogIndex = defaults.lastEntryIndex
 	novotereq.PreviousLogTerm = defaults.currentTerm - 1
 
@@ -293,6 +300,7 @@ func TestCallFollowerVote(t *testing.T) {
 	// REJECT LOWER INDEX
 
 	novotereq.Type = MESSAGE_VOTE_REQUEST
+	novotereq.CandidateId = 999
 	novotereq.PreviousLogIndex = defaults.lastEntryIndex - 2
 	novotereq.PreviousLogTerm = defaults.currentTerm
 
@@ -325,4 +333,107 @@ func TestCallFollowerVote(t *testing.T) {
 	assertEqual(t, "Leader id is updated", r.leader, votereq.CandidateId)
 	assertEqual(t, "Votedfor is updated", r.votedFor, votereq.CandidateId)
 	assertEqual(t, "Node must be in follower state", r.currentState.String(), raft_follower.String())
+}
+
+func TestTransitionToPrecandidate(t *testing.T) {
+	r, _, _, _ := setupRaftTest()
+
+	r.electionTimeout = 5
+	r.peers = []uint64{1, 2, 3, 4}
+
+	cycleNTicks(r, 5)
+	r.Tick()
+	output := <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 4, 0, 0, 0)
+	assertEqual(t, "Election elapsed is reset", r.electionElapsed, 0)
+
+	for i, msg := range output.SendMessages {
+		assertEqual(t, "Sent prevote request", msg.Type.String(), MESSAGE_PREVOTE_REQUEST.String())
+		assertEqual(t, "Sent from precandidate", msg.From, r.id)
+		assertEqual(t, "Sent with precandidate id", msg.CandidateId, r.id)
+		assertEqual(t, "Sent with last entry index", msg.PreviousLogIndex, r.lastEntryIndex)
+		assertEqual(t, "Sent with latest term", msg.Term, r.currentTerm)
+		assertEqual(t, "Sent with latest entry term", msg.PreviousLogTerm, r.currentTerm)
+		assertEqual(t, "Sent to each peer in order", msg.To, r.peers[i])
+	}
+}
+
+func TestPrecandidateAcceptsVotesAndTransitions(t *testing.T) {
+	r, _, _, _ := setupRaftTest()
+
+	r.peers = []uint64{1, 2, 3, 4}
+
+	grant := genericRaftMessage(MESSAGE_PREVOTE_RESPONSE, 1, r.id)
+	grant.Term = r.currentTerm
+	grant.VoteGranted = true
+
+	reject := genericRaftMessage(MESSAGE_PREVOTE_RESPONSE, 1, r.id)
+	reject.Term = r.currentTerm
+	reject.VoteGranted = false
+
+	r.electionTimeout = 5
+
+	cycleNTicks(r, 6)
+
+	assertEqual(t, "Went into precandidate state", r.currentState.String(), raft_precandidate.String())
+
+	r.electionTimeout = 5
+
+	cycleNTicks(r, 6)
+
+	assertEqual(t, "Stays in precandidate state after timeout", r.currentState.String(), raft_precandidate.String())
+
+	for range 5 {
+		r.Call(reject)
+		<-r.Ready()
+		r.Advance()
+		assertEqual(t, "Votes are not counted", r.votes, 0)
+		assertEqual(t, "Must stay in precandidate state", r.currentState.String(), raft_precandidate.String())
+	}
+
+	for range 2 {
+		r.Call(grant)
+		output := <-r.Ready()
+		assert(t, output == nil, "Output should be nil")
+		r.Advance()
+	}
+
+	r.Call(grant)
+	<-r.Ready()
+	r.Advance()
+
+	assertEqual(t, "Should go to Candidate status on quorum", r.currentState.String(), raft_candidate.String())
+}
+
+func TestPrecandidateStepsDownToFollowerOnHeartbeat(t *testing.T) {
+	r, defaults, _, _ := setupRaftTest()
+
+	r.electionTimeout = 5
+
+	cycleNTicks(r, 6)
+
+	assertEqual(t, "In precandidate state", r.currentState.String(), raft_precandidate.String())
+
+	msg := genericRaftMessage(MESSAGE_APPEND, 1, r.id)
+	msg.LeaderId = msg.From
+	msg.Term = r.currentTerm + 1
+	msg.PreviousLogIndex = r.lastEntryIndex
+	msg.PreviousLogTerm = r.currentTerm
+
+	r.Call(msg)
+	output := <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 1, 0, 0)
+
+	response := output.SendMessages[0]
+	assertEqual(t, "Sends append entry response", response.Type.String(), MESSAGE_APPEND_RESPONSE.String())
+	assertEqual(t, "Sends success response", response.Success, true)
+
+	update := output.UpdateMetadata[0]
+	assertEqual(t, "Updates term", update.CurrentTerm, defaults.currentTerm+1)
+	assertEqual(t, "Updates current term", r.currentTerm, update.CurrentTerm)
+	assertEqual(t, "Steps down to follower", r.currentState.String(), raft_follower.String())
 }
