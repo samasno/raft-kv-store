@@ -30,3 +30,13 @@ func validateEntriesAreSequential(prevIndex, prevTerm uint64, entries []RaftEntr
 
 	return nil
 }
+
+func genericRaftMessage(msgType RaftMessageType, from, to uint64) RaftMessage {
+	msg := RaftMessage{
+		Type: msgType,
+		To:   to,
+		From: from,
+	}
+
+	return msg
+}

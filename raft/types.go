@@ -36,6 +36,7 @@ const (
 	MESSAGE_PREVOTE_RESPONSE
 	MESSAGE_VOTE_REQUEST
 	MESSAGE_VOTE_RESPONSE
+	MESSAGE_INVALID_REQUEST
 )
 
 func (rm RaftMessageType) String() string {
@@ -76,12 +77,8 @@ type RaftMessage struct {
 	// Append entry response
 	Success bool
 
-	// Request vote
-	CandidateId           uint64
-	CandidateLastLogIndex uint64
-	CandidateLastLogTerm  uint64
-
-	// Voting response
+	// Voting
+	CandidateId uint64
 	VoteGranted bool
 }
 

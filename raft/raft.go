@@ -137,28 +137,22 @@ func (r *Raft) Done() {
 	r.donec <- struct{}{}
 }
 
-func (r *Raft) handleCycle(...any) {
-	r.resetOutbound()
-
-}
-
 func (r *Raft) callFollower(m RaftMessage) {
 	switch m.Type {
 	case MESSAGE_APPEND:
 		r.followerAppendEntry(m)
 	case MESSAGE_PREVOTE_REQUEST:
-		println("follower handling prevote")
+		r.followerReplyPrevoteRequest(m)
 	case MESSAGE_VOTE_REQUEST:
-		println("follower go vote request")
+		r.handleVoteRequest(m)
 	default:
-		println("invalid message for follower state")
+		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
 	}
 }
 
 func (r *Raft) followerAppendEntry(m RaftMessage) {
 	if m.Term < r.currentTerm {
 		r.addAppendEntryResponse(false, m.From)
-		r.tickFollower()
 		return
 	}
 
@@ -179,7 +173,6 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 
 	r.applyCommittedEntries()
 
-	// must be in sync with leader before creating update
 	err := r.validateEntriesBeforeAppend(m.PreviousLogIndex, m.PreviousLogTerm, m.Entries)
 	if err != nil {
 		r.addAppendEntryResponse(false, m.From)
@@ -189,6 +182,46 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 	r.addOutboundWriteEntries(m.Entries)
 
 	r.addAppendEntryResponse(true, m.From)
+}
+
+func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
+	if r.electionElapsed < r.electionTimeout-5 {
+		r.addPrevoteResponseToOutput(false, m.From)
+		return
+	}
+
+	if r.currentTerm > m.PreviousLogTerm {
+		r.addPrevoteResponseToOutput(false, m.From)
+		return
+	}
+
+	if r.currentTerm < m.PreviousLogTerm {
+		r.addPrevoteResponseToOutput(true, m.From)
+		return
+	}
+
+	if r.lastEntryIndex <= m.PreviousLogIndex {
+		r.addPrevoteResponseToOutput(true, m.From)
+		return
+	}
+
+	r.addPrevoteResponseToOutput(false, m.From)
+}
+
+func (r *Raft) handleVoteRequest(m RaftMessage) {
+	if r.currentTerm >= m.Term || r.lastEntryIndex > m.PreviousLogIndex {
+		r.addVoteResponseToOutput(false, m.From)
+		return
+	}
+
+	r.addOutboundMetadataUpdate(RaftMetadataUpdate{VotedFor: m.CandidateId, CurrentTerm: m.Term})
+	r.addVoteResponseToOutput(true, m.From)
+	r.transitionFollower()
+	r.leader = m.CandidateId
+}
+
+func (r *Raft) transitionFollower() {
+	r.currentState = raft_follower
 }
 
 func (r *Raft) applyCommittedEntries() {
@@ -246,15 +279,23 @@ func (r *Raft) validateEntriesBeforeAppend(index, term uint64, entries []RaftEnt
 }
 
 func (r *Raft) addAppendEntryResponse(success bool, to uint64) {
-	failureMessage := RaftMessage{
-		Type:    MESSAGE_APPEND_RESPONSE,
-		To:      to,
-		From:    r.id,
-		Success: success,
-		Term:    r.currentTerm,
-	}
+	r.addResponseToOutput(MESSAGE_APPEND_RESPONSE, success, false, to)
+}
 
-	r.addOutboundMessage(failureMessage)
+func (r *Raft) addPrevoteResponseToOutput(success bool, to uint64) {
+	r.addResponseToOutput(MESSAGE_PREVOTE_RESPONSE, success, success, to)
+}
+
+func (r *Raft) addVoteResponseToOutput(success bool, to uint64) {
+	r.addResponseToOutput(MESSAGE_VOTE_RESPONSE, success, success, to)
+}
+
+func (r *Raft) addResponseToOutput(msgType RaftMessageType, success bool, voteGranted bool, to uint64) {
+	msg := genericRaftMessage(msgType, r.id, to)
+	msg.Success = success
+	msg.VoteGranted = voteGranted
+	msg.Term = r.currentTerm
+	r.addOutboundMessage(msg)
 }
 
 func (r *Raft) tickFollower() {
