@@ -102,7 +102,7 @@ func assertEqual[T comparable](t *testing.T, name string, actual, expected T) {
 func baseValidationCycleOutput(t *testing.T, output *RaftOutput, sendLen, mdataLen, entriesLen, applyLen int) {
 	t.Helper()
 
-	assert(t, nil != output, "Output is not nil")
+	assert(t, nil != output, "Output is should not be nil")
 	assertEqual(t, "Messages to send", len(output.SendMessages), sendLen)
 	assertEqual(t, "Metadata updates", len(output.UpdateMetadata), mdataLen)
 	assertEqual(t, "Entries to write", len(output.WriteLogEntries), entriesLen)
