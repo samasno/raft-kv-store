@@ -437,3 +437,79 @@ func TestPrecandidateStepsDownToFollowerOnHeartbeat(t *testing.T) {
 	assertEqual(t, "Updates current term", r.currentTerm, update.CurrentTerm)
 	assertEqual(t, "Steps down to follower", r.currentState.String(), raft_follower.String())
 }
+
+func TestTransitionToCandidate(t *testing.T) {
+	r, defaults, _, _ := setupRaftTest()
+
+	r.electionTimeout = 5
+	r.peers = []uint64{1, 2, 3, 4}
+
+	r.transitionCandidate()
+	go r.loadOutboundToReady()
+	output := <-r.Ready()
+	r.advance()
+
+	baseValidationCycleOutput(t, output, 4, 1, 0, 0)
+	assertEqual(t, "Election elapsed is reset", r.electionElapsed, 0)
+	assertEqual(t, "Current state is updated", r.currentState.String(), raft_candidate.String())
+	assertEqual(t, "Current term is updated", r.currentTerm, defaults.currentTerm+1)
+	assertEqual(t, "Voted for is updated", r.votedFor, r.id)
+	assertEqual(t, "Election elapsed is reset", r.electionElapsed, 0)
+
+	for i, msg := range output.SendMessages {
+		assertEqual(t, "Sent vote request", msg.Type.String(), MESSAGE_VOTE_REQUEST.String())
+		assertEqual(t, "Sent from candidate", msg.From, r.id)
+		assertEqual(t, "Sent with candidate id", msg.CandidateId, r.id)
+		assertEqual(t, "Sent with last entry index", msg.PreviousLogIndex, r.lastEntryIndex)
+		assertEqual(t, "Sent with latest term", msg.Term, r.currentTerm)
+		assertEqual(t, "Sent with latest entry term", msg.PreviousLogTerm, defaults.currentTerm)
+		assertEqual(t, "Sent to each peer in order", msg.To, r.peers[i])
+	}
+}
+
+// func TestCandidateVotesTransitionToLeader(t *testing.T) {
+// 	r, _, _, _ := setupRaftTest()
+
+// 	r.peers = []uint64{1, 2, 3, 4}
+
+// 	grant := genericRaftMessage(MESSAGE_VOTE_RESPONSE, 1, r.id)
+// 	grant.Term = r.currentTerm
+// 	grant.VoteGranted = true
+
+// 	reject := genericRaftMessage(MESSAGE_VOTE_RESPONSE, 1, r.id)
+// 	reject.Term = r.currentTerm
+// 	reject.VoteGranted = false
+
+// 	r.electionTimeout = 5
+
+// 	cycleNTicks(r, 6)
+
+// 	assertEqual(t, "Went into precandidate state", r.currentState.String(), raft_precandidate.String())
+
+// 	r.electionTimeout = 5
+
+// 	cycleNTicks(r, 6)
+
+// 	assertEqual(t, "Stays in precandidate state after timeout", r.currentState.String(), raft_precandidate.String())
+
+// 	for range 5 {
+// 		r.Call(reject)
+// 		<-r.Ready()
+// 		r.Advance()
+// 		assertEqual(t, "Votes are not counted", r.votes, 0)
+// 		assertEqual(t, "Must stay in precandidate state", r.currentState.String(), raft_precandidate.String())
+// 	}
+
+// 	for range 2 {
+// 		r.Call(grant)
+// 		output := <-r.Ready()
+// 		assert(t, output == nil, "Output should be nil")
+// 		r.Advance()
+// 	}
+
+// 	r.Call(grant)
+// 	<-r.Ready()
+// 	r.Advance()
+
+// 	assertEqual(t, "Should go to Candidate status on quorum", r.currentState.String(), raft_candidate.String())
+// }
