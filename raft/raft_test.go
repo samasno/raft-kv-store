@@ -462,7 +462,7 @@ func TestTransitionToCandidate(t *testing.T) {
 		assertEqual(t, "Sent with candidate id", msg.CandidateId, r.id)
 		assertEqual(t, "Sent with last entry index", msg.PreviousLogIndex, r.lastEntryIndex)
 		assertEqual(t, "Sent with latest term", msg.Term, r.currentTerm)
-		assertEqual(t, "Sent with latest entry term", msg.PreviousLogTerm, defaults.currentTerm)
+		assertEqual(t, "Sent with latest entry term", msg.PreviousLogTerm, r.lastEntryTerm)
 		assertEqual(t, "Sent to each peer in order", msg.To, r.peers[i])
 	}
 }
