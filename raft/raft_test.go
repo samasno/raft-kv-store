@@ -548,13 +548,11 @@ func TestCandidateVotesTransitionToLeader(t *testing.T) {
 	grant.Term = r.currentTerm
 	grant.VoteGranted = true
 
-	var output *RaftOutput
 	for i := range 2 {
 		r.Call(grant)
-		output = <-r.Ready()
-		assert(t, output == nil, "Output should be nil")
+		<-r.Ready()
 		r.Advance()
-		assertEqual(t, "Votes accumalated correctly", r.votes, uint64(i+2)) // offset for i starting at 0 and self vote
+		assertEqual(t, "Votes accumulated correctly", r.votes, uint64(i+2)) // offset for i starting at 0 and self vote
 	}
 
 	assertEqual(t, "Should go to Leader state simple majority", r.currentState.String(), raft_leader.String())
@@ -600,4 +598,27 @@ func TestLeaderStepsDownIfStale(t *testing.T) {
 	assertEqual(t, "Leader updates", r.leader, newLeader)
 	assertEqual(t, "Term updates", r.currentTerm, successTerm)
 	assertEqual(t, "Steps down to follower", r.currentState.String(), raft_follower.String())
+}
+
+func TestTransitionToLeader(t *testing.T) {
+	r, defaults, _, _ := setupRaftTest()
+
+	r.currentState = raft_candidate
+
+	r.transitionLeader()
+	go r.loadOutboundToReady()
+	output := <-r.Ready()
+	r.advance()
+
+	baseValidationCycleOutput(t, output, 4, 0, 1, 0)
+	assertEqual(t, "Entry index was incremented", r.lastEntryIndex, defaults.lastEntryIndex+1)
+
+	entry := output.WriteLogEntries[0]
+	assertEqual(t, "Correct index on entry", entry.Index, defaults.lastEntryIndex+1)
+	assertEqual(t, "Correct term on entry", entry.Term, r.currentTerm)
+	for _, msg := range output.SendMessages {
+		assertEqual(t, "Sends append msg", msg.Type.String(), MESSAGE_APPEND.String()) // sends append entry type
+		assertEqual(t, "Payload is 0 len", len(msg.Entries[0].Payload), 0)
+		assertEqual(t, "Term does not change", msg.Term, defaults.currentTerm)
+	}
 }
