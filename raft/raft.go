@@ -19,6 +19,8 @@ type Raft struct { // implements raftInternal interface
 	call raftCallFn // use transtion functions to reset op pointers
 	tick raftTickFn
 
+	followTracker followTracker
+
 	currentTerm uint64
 	votedFor    uint64
 	votes       uint64
@@ -138,7 +140,7 @@ func (r *Raft) advance() {
 		r.leader = r.votedFor
 	}
 
-	if r.votedFor == r.id {
+	if r.pending.votedFor == r.id {
 		r.votes++
 	}
 
@@ -212,7 +214,7 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 		return
 	}
 
-	r.addOutboundWriteEntries(m.Entries)
+	r.addOutboundWriteEntries(m.Entries...)
 
 	r.addAppendEntryResponse(true, m.From)
 }
@@ -280,6 +282,7 @@ func (r *Raft) stepDownToFollowerIfStale(m RaftMessage) {
 		return
 	}
 
+	r.updateFollowTracking()
 	r.transitionFollower()
 	r.callFollower(m)
 }
@@ -372,12 +375,18 @@ func (r *Raft) transitionLeader() {
 	r.currentState = raft_leader
 	r.call = r.callLeader
 	r.tick = r.tickLeader
+	r.leader = r.id
+	r.updateFollowTracking()
+
+	r.leaderWriteNewEntries([][]byte{nil})
 }
 
 func (r *Raft) callLeader(m RaftMessage) {
 	switch m.Type {
 	case MESSAGE_APPEND:
 		r.stepDownToFollowerIfStale(m)
+	case MESSAGE_APPEND_RESPONSE:
+		println("got response")
 	default:
 		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
 	}
@@ -387,7 +396,49 @@ func (r *Raft) tickLeader() {
 	println("leader tick")
 }
 
+func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
+	newEntries := []RaftEntry{}
+
+	entryIndex := r.lastEntryIndex + 1
+	for _, rawEntry := range rawEntries {
+		entry := newEntry(entryIndex, r.currentTerm, rawEntry)
+		newEntries = append(newEntries, entry)
+		entryIndex++
+	}
+
+	r.addOutboundWriteEntries(newEntries...)
+	msg := RaftMessage{
+		From:             r.id,
+		Type:             MESSAGE_APPEND,
+		Term:             r.currentTerm,
+		PreviousLogIndex: r.lastEntryIndex,
+		PreviousLogTerm:  r.lastEntryTerm,
+		Entries:          newEntries,
+	}
+
+	r.sendMessageToAllPeers(msg)
+}
+
+func newEntry(index uint64, term uint64, payload []byte) RaftEntry {
+	return RaftEntry{
+		Index:   index,
+		Term:    term,
+		Payload: payload,
+	}
+}
+
 // HELPERS
+func (r *Raft) sendMessageToAllPeers(m RaftMessage) {
+	messages := []RaftMessage{}
+
+	for _, id := range r.peers {
+		shallowCopy := m
+		shallowCopy.To = id
+		messages = append(messages, shallowCopy)
+	}
+
+	r.addOutboundMessage(messages...)
+}
 
 func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMessage {
 	output := []RaftMessage{}
@@ -537,7 +588,7 @@ func (r *Raft) addOutboundApplyEntries(entries []RaftEntry) {
 	r.outbound.ApplyEntries = append(r.outbound.ApplyEntries, entries...)
 }
 
-func (r *Raft) addOutboundWriteEntries(entries []RaftEntry) {
+func (r *Raft) addOutboundWriteEntries(entries ...RaftEntry) {
 	if 0 == len(entries) {
 		return
 	}
@@ -558,4 +609,19 @@ func (r *Raft) resetOutbound() {
 	}
 
 	r.outbound = ro
+}
+
+func (r *Raft) updateFollowTracking() {
+	if r.currentState != raft_leader {
+		r.followTracker = nil
+		return
+	}
+
+	tracker := followTracker{}
+
+	for _, id := range r.peers {
+		tracker[id] = followerStatus{}
+	}
+
+	r.followTracker = tracker
 }
