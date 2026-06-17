@@ -559,3 +559,45 @@ func TestCandidateVotesTransitionToLeader(t *testing.T) {
 
 	assertEqual(t, "Should go to Leader state simple majority", r.currentState.String(), raft_leader.String())
 }
+
+func TestLeaderStepsDownIfStale(t *testing.T) {
+	r, defaults, _, mlog := setupRaftTest()
+
+	newLeader := uint64(111)
+	r.currentState = raft_leader
+	r.call = r.callLeader
+
+	failTerm := r.currentTerm
+	fail := baselineAppendEntryTestMessage(r, mlog)
+	fail.LeaderId = newLeader
+	fail.Term = failTerm
+
+	r.Call(fail)
+	output := <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+
+	response := output.SendMessages[0]
+	assertEqual(t, "Term should not change", r.currentTerm, defaults.currentTerm)
+	assertEqual(t, "Should send failure response", response.Success, false)
+
+	successTerm := r.currentTerm + 3
+	success := baselineAppendEntryTestMessage(r, mlog)
+	success.LeaderId = newLeader
+	success.Term = successTerm
+
+	r.Call(success)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 1, 0, 0)
+
+	response = output.SendMessages[0]
+	update := output.UpdateMetadata[0]
+	assertEqual(t, "Should send success message", response.Success, true)
+	assertEqual(t, "Should update term in metadata", update.CurrentTerm, successTerm)
+	assertEqual(t, "Leader updates", r.leader, newLeader)
+	assertEqual(t, "Term updates", r.currentTerm, successTerm)
+	assertEqual(t, "Steps down to follower", r.currentState.String(), raft_follower.String())
+}

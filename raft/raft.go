@@ -275,8 +275,9 @@ func (r *Raft) precandidateReceivePrevoteResponse(m RaftMessage) {
 }
 
 func (r *Raft) stepDownToFollowerIfStale(m RaftMessage) {
-	if r.currentTerm >= m.Term {
+	if m.Term <= r.currentTerm {
 		r.addAppendEntryResponse(false, m.From)
+		return
 	}
 
 	r.transitionFollower()
@@ -374,7 +375,12 @@ func (r *Raft) transitionLeader() {
 }
 
 func (r *Raft) callLeader(m RaftMessage) {
-	println("leader call")
+	switch m.Type {
+	case MESSAGE_APPEND:
+		r.stepDownToFollowerIfStale(m)
+	default:
+		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+	}
 }
 
 func (r *Raft) tickLeader() {
