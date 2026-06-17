@@ -125,6 +125,7 @@ func (ro *RaftOutput) generateUpdate() *raftUpdate {
 
 	for _, e := range ro.WriteLogEntries {
 		update.lastEntryIndex = max(e.Index, update.lastEntryIndex)
+		update.lastEntryTerm = max(e.Term, update.lastEntryTerm)
 	}
 
 	for _, e := range ro.ApplyEntries {
@@ -138,6 +139,7 @@ type raftUpdate struct {
 	currentTerm      uint64
 	votedFor         uint64
 	lastEntryIndex   uint64
+	lastEntryTerm    uint64
 	lastAppliedIndex uint64
 }
 
