@@ -141,6 +141,7 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	r.lastAppliedIndex = lastLog
 	r.commitIndex = lastLog
 	r.currentTerm, _ = mlog.LastLogTerm()
+	r.peers = []uint64{1, 2, 3, 4}
 
 	defaults := *r
 
@@ -171,7 +172,6 @@ func cycleNTicks(r *Raft, n int) {
 	}
 }
 
-// for appending to a log. starts at prevIndex + 1
 func generateNEntries(count, prevIndex, startTerm uint64) []RaftEntry {
 	output := []RaftEntry{}
 
