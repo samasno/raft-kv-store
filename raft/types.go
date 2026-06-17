@@ -148,6 +148,13 @@ type RaftMetadataUpdate struct {
 	CurrentTerm uint64
 }
 
+type followTracker map[uint64]followerStatus
+
+type followerStatus struct {
+	lastEntryTerm  uint64
+	lastEntryIndex uint64
+}
+
 type RaftConfig struct {
 	id uint64
 }
