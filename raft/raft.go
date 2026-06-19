@@ -400,6 +400,7 @@ func (r *Raft) tickLeader() {
 }
 
 func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
+	// TODO state checks
 	newEntries := []RaftEntry{}
 
 	entryIndex := r.lastEntryIndex + 1
