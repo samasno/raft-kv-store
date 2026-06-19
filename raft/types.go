@@ -36,6 +36,7 @@ const (
 	MESSAGE_PREVOTE_RESPONSE
 	MESSAGE_VOTE_REQUEST
 	MESSAGE_VOTE_RESPONSE
+	MESSAGE_NEW_ENTRY
 	MESSAGE_INVALID_REQUEST
 )
 
@@ -72,7 +73,8 @@ type RaftMessage struct {
 	PreviousLogTerm  uint64
 	LeaderCommit     uint64
 
-	Entries []RaftEntry
+	Entries    []RaftEntry
+	RawEntries [][]byte
 
 	// Append entry response
 	Success bool
