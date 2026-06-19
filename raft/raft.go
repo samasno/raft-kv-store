@@ -383,17 +383,20 @@ func (r *Raft) transitionLeader() {
 
 func (r *Raft) callLeader(m RaftMessage) {
 	switch m.Type {
+	case MESSAGE_NEW_ENTRY:
+		r.leaderWriteNewEntries(m.RawEntries)
 	case MESSAGE_APPEND:
 		r.stepDownToFollowerIfStale(m)
 	case MESSAGE_APPEND_RESPONSE:
 		println("got response")
 	default:
-		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+		r.addResponseToOutput(m.Type, false, false, m.From)
 	}
 }
 
 func (r *Raft) tickLeader() {
-	println("leader tick")
+	r.time++
+	r.leaderSendHeartbeat()
 }
 
 func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
@@ -413,7 +416,21 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 		Term:             r.currentTerm,
 		PreviousLogIndex: r.lastEntryIndex,
 		PreviousLogTerm:  r.lastEntryTerm,
+		LeaderCommit:     r.commitIndex,
 		Entries:          newEntries,
+	}
+
+	r.sendMessageToAllPeers(msg)
+}
+
+func (r *Raft) leaderSendHeartbeat() {
+	msg := RaftMessage{
+		Type:             MESSAGE_APPEND,
+		Term:             r.currentTerm,
+		LeaderId:         r.id,
+		PreviousLogIndex: r.lastEntryIndex,
+		PreviousLogTerm:  r.lastEntryTerm,
+		LeaderCommit:     r.commitIndex,
 	}
 
 	r.sendMessageToAllPeers(msg)
