@@ -3,6 +3,7 @@ package raft
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -282,7 +283,7 @@ func (r *Raft) stepDownToFollowerIfStale(m RaftMessage) {
 		return
 	}
 
-	r.updateFollowTracking()
+	r.initFollowTracking()
 	r.transitionFollower()
 	r.callFollower(m)
 }
@@ -376,7 +377,7 @@ func (r *Raft) transitionLeader() {
 	r.call = r.callLeader
 	r.tick = r.tickLeader
 	r.leader = r.id
-	r.updateFollowTracking()
+	r.initFollowTracking()
 
 	r.leaderWriteNewEntries([][]byte{nil})
 }
@@ -388,7 +389,7 @@ func (r *Raft) callLeader(m RaftMessage) {
 	case MESSAGE_APPEND:
 		r.stepDownToFollowerIfStale(m)
 	case MESSAGE_APPEND_RESPONSE:
-		println("got response")
+		r.leaderHandleAppendMessageResponse(m)
 	default:
 		r.addResponseToOutput(m.Type, false, false, m.From)
 	}
@@ -400,7 +401,6 @@ func (r *Raft) tickLeader() {
 }
 
 func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
-	// TODO state checks
 	newEntries := []RaftEntry{}
 
 	entryIndex := r.lastEntryIndex + 1
@@ -422,6 +422,62 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 	}
 
 	r.sendMessageToAllPeers(msg)
+}
+
+func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
+	// msg append response coming in from follower
+	// follower must include it's latest entry index and term
+	followerId := m.From
+	// update tracking with index/term
+	f := r.followTracker[followerId]
+
+	f.lastEntryIndex = m.PreviousLogIndex
+	f.lastEntryTerm = m.PreviousLogTerm
+
+	r.followTracker[followerId] = f
+
+	if m.Success {
+		return
+	}
+
+	if r.lastEntryIndex > f.lastEntryIndex {
+		// get first index of followers latest term
+		// send batch of up to 100 to follower
+		startIndex, err := r.logFile.StartOfTerm(f.lastEntryTerm)
+		if err != nil {
+			startIndex = 1
+		}
+
+		count := min(100, r.lastEntryIndex-f.lastEntryIndex)
+		r.logFile.GetEntries(startIndex, startIndex+count)
+	}
+
+	r.leaderUpdateCommitIndex()
+}
+
+func (r *Raft) leaderUpdateCommitIndex() {
+	if nil == r.followTracker {
+		panic("Follow tracker not initialized")
+	}
+
+	latestEntries := []uint64{r.lastEntryIndex}
+	for _, f := range r.followTracker {
+		latestEntries = append(latestEntries, f.lastEntryIndex)
+	}
+
+	sort.Slice(latestEntries, func(i, j int) bool {
+		return latestEntries[i] > latestEntries[j]
+	})
+
+	// maybe update in case tracking not up to date, safeguard to prevent lowering commit
+	maybeUpdate := latestEntries[len(r.peers)/2]
+	if maybeUpdate < r.commitIndex {
+		return
+	}
+
+	r.commitIndex = max(r.commitIndex, maybeUpdate)
+	r.applyCommittedEntries()
+	r.leaderSendHeartbeat()
 }
 
 func (r *Raft) leaderSendHeartbeat() {
@@ -497,16 +553,18 @@ func (r *Raft) applyCommittedEntries() {
 		return
 	}
 
-	startIndex := r.lastAppliedIndex
+	startIndex := r.lastAppliedIndex + 1
+
 	endIndex := min(r.commitIndex, r.lastEntryIndex)
 
 	entries, err := r.logFile.GetEntries(startIndex, endIndex)
+
 	if err != nil {
 		msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
 		panic(msg)
 	}
 
-	err = validateEntriesAreSequential(startIndex, entries[0].Term, entries)
+	err = validateEntriesAreSequential(r.lastAppliedIndex, entries[0].Term, entries)
 	if err != nil {
 		msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
 		panic(msg)
@@ -595,6 +653,7 @@ func (r *Raft) addOutboundApplyEntries(entries []RaftEntry) {
 	if 0 == len(entries) {
 		return
 	}
+
 	if nil == r.outbound {
 		r.resetOutbound()
 	}
@@ -629,7 +688,7 @@ func (r *Raft) resetOutbound() {
 	r.outbound = ro
 }
 
-func (r *Raft) updateFollowTracking() {
+func (r *Raft) initFollowTracking() {
 	if r.currentState != raft_leader {
 		r.followTracker = nil
 		return
