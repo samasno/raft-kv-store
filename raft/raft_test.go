@@ -622,3 +622,90 @@ func TestTransitionToLeader(t *testing.T) {
 		assertEqual(t, "Term does not change", msg.Term, defaults.currentTerm)
 	}
 }
+
+func TestLeaderSendsHeartbeatOnTick(t *testing.T) {
+	r, _, _, _ := setupRaftTest()
+
+	r.currentState = raft_candidate
+	r.transitionLeader()
+	r.time = 100
+	go r.loadOutboundToReady()
+	<-r.Ready()
+	r.advance()
+
+	assert(t, r.currentState == raft_leader, "Establish baseline leader")
+
+	startTime := r.time
+	for i := range 5 {
+		r.Tick()
+		output := <-r.Ready()
+		r.Advance()
+
+		timeInc := startTime + uint64(i+1)
+		assertEqual(t, "Time is incrementing per tick", r.time, timeInc)
+		baseValidationCycleOutput(t, output, len(r.peers), 0, 0, 0)
+		for j, msg := range output.SendMessages {
+			assertEqual(t, "Addressed to a peer", msg.To, r.peers[j])
+			assertEqual(t, "Sent append message", msg.Type.String(), MESSAGE_APPEND.String())
+			assertEqual(t, "Previous entry has correct term", msg.PreviousLogTerm, r.currentTerm)
+			assertEqual(t, "Previous entry correct index", msg.PreviousLogIndex, r.lastEntryIndex)
+			assertEqual(t, "Sent with correct commit", msg.LeaderCommit, r.commitIndex)
+		}
+	}
+
+}
+
+func TestLeaderSendsNewWritesToAllFollowers(t *testing.T) {
+	r, defaults, _, _ := setupRaftTest()
+
+	r.currentState = raft_candidate
+	r.transitionLeader()
+	r.time = 100
+	go r.loadOutboundToReady()
+	<-r.Ready()
+	r.advance()
+
+	rawEntries := [][]byte{}
+	rawEntries = append(rawEntries, []byte("one"))
+	rawEntries = append(rawEntries, []byte("two"))
+	rawEntries = append(rawEntries, []byte("three"))
+	rawEntries = append(rawEntries, []byte("four"))
+	startIndex := r.lastEntryIndex
+
+	msg := RaftMessage{
+		Type:       MESSAGE_NEW_ENTRY,
+		RawEntries: rawEntries,
+	}
+
+	r.Call(msg)
+	output := <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 4, 0, len(rawEntries), 0)
+	assertEqual(t, "Last entry index updated", r.lastEntryIndex, startIndex+uint64(len(rawEntries)))
+
+	err := validateEntriesAreSequential(startIndex, defaults.currentTerm, output.WriteLogEntries)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	for i, msg := range output.SendMessages {
+		assertEqual(t, "Addressed to a peer", msg.To, r.peers[i])
+		assertEqual(t, "Sent append message", msg.Type.String(), MESSAGE_APPEND.String())
+		assertEqual(t, "Previous entry has correct term", msg.PreviousLogTerm, defaults.currentTerm)
+		assertEqual(t, "Previous entry correct index", msg.PreviousLogIndex, startIndex)
+		assertEqual(t, "Sent with correct commit", msg.LeaderCommit, r.commitIndex)
+		for j, e := range msg.Entries {
+			assertEqual(t, "Correct entries sent", string(e.Payload), string(rawEntries[j]))
+		}
+	}
+}
+
+func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
+	// set up leader
+	// make append response where term and index are behind leader
+	// call message
+	// output should have entries starting at the term and index
+}
+
+func TestLeaderSendsUpdateForCommitUpdate(t *testing.T) {}
