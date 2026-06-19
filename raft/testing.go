@@ -52,8 +52,18 @@ func (ms *inMemoryLogFile) GetEntries(startIndex, endIndex uint64) ([]RaftEntry,
 		return nil, fmt.Errorf("Range requested exceeds last entry in log: %d-%d", startIndex, endIndex)
 	}
 
-	entries := ms.log[startIndex:endIndex]
+	entries := ms.log[startIndex-1 : endIndex]
 	return entries, nil
+}
+
+func (ms *inMemoryLogFile) StartOfTerm(termNumber uint64) (uint64, error) {
+	for _, e := range ms.log {
+		if e.Term == termNumber {
+			return e.Index, nil
+		}
+	}
+
+	return 0, fmt.Errorf("Term %d number not found", termNumber)
 }
 
 func (ms *inMemoryLogFile) appendRaftEntries(entries []RaftEntry) {
@@ -126,7 +136,7 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	err := validateEntriesAreSequential(0, 1, mlog.log)
 	if err != nil {
 		println(err.Error())
-		return nil, Raft{}, nil, nil
+		panic("Entries invalid in raft setup")
 	}
 
 	conf := RaftConfig{id}
