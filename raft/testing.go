@@ -56,6 +56,15 @@ func (ms *inMemoryLogFile) GetEntries(startIndex, endIndex uint64) ([]RaftEntry,
 	return entries, nil
 }
 
+func (ms *inMemoryLogFile) GetEntry(index uint64) (RaftEntry, error) {
+	if int(index) > len(ms.log) {
+		return RaftEntry{}, fmt.Errorf("Range requested exceeds last entry in log: %d", index)
+	}
+
+	entry := ms.log[index-1]
+	return entry, nil
+}
+
 func (ms *inMemoryLogFile) StartOfTerm(termNumber uint64) (uint64, error) {
 	for _, e := range ms.log {
 		if e.Term == termNumber {
@@ -112,7 +121,7 @@ func assertEqual[T comparable](t *testing.T, name string, actual, expected T) {
 func baseValidationCycleOutput(t *testing.T, output *RaftOutput, sendLen, mdataLen, entriesLen, applyLen int) {
 	t.Helper()
 
-	assert(t, nil != output, "Output is should not be nil")
+	assert(t, nil != output, "Output should not be nil")
 	assertEqual(t, "Messages to send", len(output.SendMessages), sendLen)
 	assertEqual(t, "Metadata updates", len(output.UpdateMetadata), mdataLen)
 	assertEqual(t, "Entries to write", len(output.WriteLogEntries), entriesLen)
@@ -135,7 +144,6 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 
 	err := validateEntriesAreSequential(0, 1, mlog.log)
 	if err != nil {
-		println(err.Error())
 		panic("Entries invalid in raft setup")
 	}
 
@@ -158,19 +166,19 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	return r, defaults, mdata, mlog
 }
 
-func baselineAppendEntryTestMessage(r *Raft, mlog *inMemoryLogFile) RaftMessage {
+func baselineAppendEntryTestMessage(r *Raft) RaftMessage {
 	m := RaftMessage{
-		Type:         MESSAGE_APPEND,
-		To:           r.id,
-		From:         r.leader,
-		Term:         r.currentTerm,
-		LeaderCommit: r.commitIndex,
-		LeaderId:     r.leader,
-		Entries:      nil,
+		Type:             MESSAGE_APPEND,
+		To:               r.id,
+		From:             r.leader,
+		Term:             r.currentTerm,
+		LeaderCommit:     r.commitIndex,
+		LeaderId:         r.leader,
+		PreviousLogIndex: r.lastEntryIndex,
+		PreviousLogTerm:  r.lastEntryTerm,
+		Entries:          nil,
 	}
 
-	m.PreviousLogIndex, _ = mlog.LastLogIndex()
-	m.PreviousLogTerm, _ = mlog.LastLogTerm()
 	return m
 }
 
