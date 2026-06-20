@@ -206,3 +206,11 @@ func generateNEntries(count, prevIndex, startTerm uint64) []RaftEntry {
 
 	return output
 }
+
+func debugPrintEntryIndexes(entries []RaftEntry) {
+	println("***Start Entry Indexes***")
+	for _, e := range entries {
+		fmt.Printf("Term: %d Index: %d\n", e.Term, e.Index)
+	}
+	println("***End Entry Indexes")
+}
