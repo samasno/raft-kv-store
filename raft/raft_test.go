@@ -802,6 +802,7 @@ func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
 	assertEqual(t, "Catch up sends 100 entries at a time", len(msg.Entries), 100)
 	err := validateEntriesAreSequential(expectedIndex, expectedTerm, msg.Entries)
 	if err != nil {
+		println("validation error")
 		t.Error(err.Error())
 	}
 

@@ -433,35 +433,74 @@ func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
 
 	r.followTracker[followerId] = f
 
-	if r.lastEntryIndex > f.lastEntryIndex {
-		startIndex, err := r.logFile.StartOfTerm(f.lastEntryTerm)
-		if err != nil {
-			startIndex = 1
-		}
+	r.leaderCatchupFollowerEntries(followerId)
 
-		count := min(100, r.lastEntryIndex-f.lastEntryIndex)
-		entries, err := r.logFile.GetEntries(startIndex, startIndex+count)
+	r.leaderUpdateCommitIndex()
+}
+
+func (r *Raft) leaderCatchupFollowerEntries(id uint64) {
+	follower := r.followTracker[id]
+
+	if r.lastEntryIndex == follower.lastEntryIndex {
+		return
+	}
+
+	if 0 == follower.lastEntryIndex {
+		batchsize := min(100, r.lastEntryIndex)
+		entries, err := r.logFile.GetEntries(1, batchsize)
 		if err != nil {
 			panic(err.Error())
 		}
 
-		err = validateEntriesAreSequential(m.PreviousLogIndex, m.PreviousLogTerm, entries)
-		if err != nil {
-			println(err.Error())
-			return
-		}
-
-		update := genericRaftMessage(MESSAGE_APPEND, r.id, followerId)
-		update.LeaderId = r.id
-		update.LeaderCommit = r.commitIndex
-		update.PreviousLogIndex = m.PreviousLogIndex
-		update.PreviousLogTerm = m.PreviousLogTerm
-		update.Entries = entries
-
-		r.addOutboundMessage(update)
+		msg := r.baselineLeaderAppendMessage(id)
+		msg.PreviousLogTerm = 0
+		msg.PreviousLogIndex = 0
+		msg.Entries = entries
+		r.addOutboundMessage(msg)
+		return
 	}
 
-	r.leaderUpdateCommitIndex()
+	termStart, err := r.logFile.StartOfTerm(follower.lastEntryTerm)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	previousEntry := RaftEntry{}
+	if 1 < termStart {
+		previousEntry, err = r.logFile.GetEntry(termStart - 1)
+		if err != nil {
+			panic(err.Error())
+		}
+	}
+
+	batchSize := min(100, r.lastEntryIndex-termStart)
+	lastEntry := termStart + batchSize - 1
+	entries, err := r.logFile.GetEntries(termStart, lastEntry)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	msg := r.baselineLeaderAppendMessage(id)
+	msg.Entries = entries
+	msg.PreviousLogIndex = previousEntry.Index
+	msg.PreviousLogTerm = previousEntry.Term
+
+	r.addOutboundMessage(msg)
+}
+
+func (r *Raft) baselineLeaderAppendMessage(to uint64) RaftMessage {
+	msg := RaftMessage{
+		Type:             MESSAGE_APPEND,
+		To:               to,
+		From:             r.id,
+		Term:             r.currentTerm,
+		LeaderId:         r.id,
+		LeaderCommit:     r.commitIndex,
+		PreviousLogIndex: r.lastEntryIndex,
+		PreviousLogTerm:  r.lastEntryTerm,
+	}
+
+	return msg
 }
 
 func (r *Raft) leaderUpdateCommitIndex() {
