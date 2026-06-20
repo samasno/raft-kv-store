@@ -1,6 +1,8 @@
 package raft
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestFollowerTicks(t *testing.T) {
 	r, defaults, _, _ := setupRaftTest()
@@ -104,8 +106,8 @@ func TestCallFollowerHeartbeatOldTermLeader(t *testing.T) {
 }
 
 func TestCallFollowerHeartbeatLaterTermLeader(t *testing.T) {
-	r, _, _, mlog := setupRaftTest()
-	msg := baselineAppendEntryTestMessage(r, mlog)
+	r, _, _, _ := setupRaftTest()
+	msg := baselineAppendEntryTestMessage(r)
 	newterm := uint64(1239349)
 	msg.Term = newterm
 
@@ -123,9 +125,9 @@ func TestCallFollowerHeartbeatLaterTermLeader(t *testing.T) {
 }
 
 func TestCallFollowerAppendEntriesWrongIndex(t *testing.T) {
-	r, _, _, mlog := setupRaftTest()
+	r, _, _, _ := setupRaftTest()
 
-	msga := baselineAppendEntryTestMessage(r, mlog)
+	msga := baselineAppendEntryTestMessage(r)
 
 	r.Call(msga)
 	output := <-r.Ready()
@@ -134,7 +136,7 @@ func TestCallFollowerAppendEntriesWrongIndex(t *testing.T) {
 	baseline := output.SendMessages[0]
 	assertEqual(t, "Baseline success", baseline.Success, true)
 
-	msgb := baselineAppendEntryTestMessage(r, mlog)
+	msgb := baselineAppendEntryTestMessage(r)
 	msgb.PreviousLogIndex = 111111
 
 	r.Call(msgb)
@@ -144,7 +146,7 @@ func TestCallFollowerAppendEntriesWrongIndex(t *testing.T) {
 	indexFail := output.SendMessages[0]
 	assertEqual(t, "Incorrect index fails", indexFail.Success, false)
 
-	msgc := baselineAppendEntryTestMessage(r, mlog)
+	msgc := baselineAppendEntryTestMessage(r)
 	msgc.PreviousLogTerm = 111111
 
 	r.Call(msgc)
@@ -156,11 +158,11 @@ func TestCallFollowerAppendEntriesWrongIndex(t *testing.T) {
 }
 
 func TestCallFollowerAppendEntriesWriteEntries(t *testing.T) {
-	r, defaults, _, mlog := setupRaftTest()
+	r, defaults, _, _ := setupRaftTest()
 
 	entries := generateNEntries(10, r.lastEntryIndex, r.currentTerm)
 
-	msg := baselineAppendEntryTestMessage(r, mlog)
+	msg := baselineAppendEntryTestMessage(r)
 
 	msg.Entries = entries
 
@@ -182,8 +184,9 @@ func TestCallFollowerAppendEntriesWriteEntries(t *testing.T) {
 }
 
 func TestCallFollowerAppendEntriesApplyEntries(t *testing.T) {
-	r, defaults, _, mlog := setupRaftTest()
-	msga := baselineAppendEntryTestMessage(r, mlog)
+	r, defaults, _, _ := setupRaftTest()
+
+	msga := baselineAppendEntryTestMessage(r)
 
 	appliedDiff := uint64(50)
 	r.commitIndex = r.commitIndex - appliedDiff
@@ -208,9 +211,9 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	// follower sends prevote success if it's within prevote window (electionTimeout - 5)
 	// prevote term assumed to be currentTerm + 1
 	// ACCEPT EQUAL TERM
-	r, defaults, _, mlog := setupRaftTest()
+	r, defaults, _, _ := setupRaftTest()
 
-	msg := baselineAppendEntryTestMessage(r, mlog)
+	msg := baselineAppendEntryTestMessage(r)
 
 	msg.Type = MESSAGE_PREVOTE_REQUEST
 	msg.PreviousLogIndex = defaults.lastEntryIndex
@@ -277,9 +280,9 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 
 func TestCallFollowerVote(t *testing.T) {
 	// REJECTS LOWER TERM
-	r, defaults, _, mlog := setupRaftTest()
+	r, defaults, _, _ := setupRaftTest()
 
-	novotereq := baselineAppendEntryTestMessage(r, mlog)
+	novotereq := baselineAppendEntryTestMessage(r)
 
 	novotereq.Type = MESSAGE_VOTE_REQUEST
 	novotereq.CandidateId = 999
@@ -316,7 +319,7 @@ func TestCallFollowerVote(t *testing.T) {
 	assertEqual(t, "Term is not updated", r.currentTerm, defaults.currentTerm)
 
 	// GRANT VOTE HIGHER TERM
-	votereq := baselineAppendEntryTestMessage(r, mlog)
+	votereq := baselineAppendEntryTestMessage(r)
 	votereq.CandidateId = 999
 	votereq.Type = MESSAGE_VOTE_REQUEST
 	votereq.Term = defaults.currentTerm + 1
@@ -470,7 +473,7 @@ func TestTransitionToCandidate(t *testing.T) {
 }
 
 func TestCandidateStepsDownWhenBehindTerm(t *testing.T) {
-	r, defaults, _, mlog := setupRaftTest()
+	r, defaults, _, _ := setupRaftTest()
 
 	r.currentState = raft_precandidate
 	r.transitionCandidate()
@@ -482,7 +485,7 @@ func TestCandidateStepsDownWhenBehindTerm(t *testing.T) {
 
 	latestTerm := r.currentTerm + 3
 	newLeaderId := uint64(1)
-	msg := baselineAppendEntryTestMessage(r, mlog)
+	msg := baselineAppendEntryTestMessage(r)
 	msg.LeaderId = newLeaderId
 	msg.Term = latestTerm
 
@@ -559,14 +562,14 @@ func TestCandidateVotesTransitionToLeader(t *testing.T) {
 }
 
 func TestLeaderStepsDownIfStale(t *testing.T) {
-	r, defaults, _, mlog := setupRaftTest()
+	r, defaults, _, _ := setupRaftTest()
 
 	newLeader := uint64(111)
 	r.currentState = raft_leader
 	r.call = r.callLeader
 
 	failTerm := r.currentTerm
-	fail := baselineAppendEntryTestMessage(r, mlog)
+	fail := baselineAppendEntryTestMessage(r)
 	fail.LeaderId = newLeader
 	fail.Term = failTerm
 
@@ -581,7 +584,7 @@ func TestLeaderStepsDownIfStale(t *testing.T) {
 	assertEqual(t, "Should send failure response", response.Success, false)
 
 	successTerm := r.currentTerm + 3
-	success := baselineAppendEntryTestMessage(r, mlog)
+	success := baselineAppendEntryTestMessage(r)
 	success.LeaderId = newLeader
 	success.Term = successTerm
 
@@ -701,11 +704,113 @@ func TestLeaderSendsNewWritesToAllFollowers(t *testing.T) {
 	}
 }
 
-func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
-	// set up leader
-	// make append response where term and index are behind leader
-	// call message
-	// output should have entries starting at the term and index
+func TestLeaderSendsUpdateForCommit(t *testing.T) {
+	r, _, _, mlog := setupRaftTest()
+	r.currentState = raft_candidate
+	r.transitionLeader()
+	r.time = 100
+
+	// TODO calling loadOutboundToReady and using internal functions causes race condition in test env, need to find better workaround
+	go r.loadOutboundToReady()
+	output := <-r.Ready()
+	assert(t, nil != output, "output not nil")
+	mlog.appendRaftEntries(output.WriteLogEntries)
+	r.advance()
+
+	rawEntries := [][]byte{}
+	rawEntries = append(rawEntries, []byte("one"))
+	rawEntries = append(rawEntries, []byte("two"))
+	rawEntries = append(rawEntries, []byte("three"))
+	rawEntries = append(rawEntries, []byte("four"))
+	startIndex := r.lastEntryIndex
+	startApplied := r.lastAppliedIndex
+
+	msg := RaftMessage{
+		Type:       MESSAGE_NEW_ENTRY,
+		RawEntries: rawEntries,
+	}
+
+	r.Call(msg)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 4, 0, len(rawEntries), 0)
+	assertEqual(t, "Last entry index updated", r.lastEntryIndex, startIndex+uint64(len(rawEntries)))
+	assertEqual(t, "Last applied index not updated", r.lastAppliedIndex, startApplied)
+	mlog.appendRaftEntries(output.WriteLogEntries)
+
+	response1 := baselineAppendEntryTestMessage(r)
+	response1.Type = MESSAGE_APPEND_RESPONSE
+	response1.To = r.id
+	response1.From = 2
+
+	response2 := baselineAppendEntryTestMessage(r)
+	response2.Type = MESSAGE_APPEND_RESPONSE
+	response2.To = r.id
+	response2.From = 3
+
+	r.Call(response1)
+	output = <-r.Ready()
+	r.Advance()
+
+	assert(t, nil == output, "First output should be nil")
+	r.Call(response2)
+	output = <-r.Ready()
+	r.Advance()
+
+	// must include initial leader commit in apply entries count
+	baseValidationCycleOutput(t, output, 4, 0, 0, len(rawEntries)+1)
 }
 
-func TestLeaderSendsUpdateForCommitUpdate(t *testing.T) {}
+func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
+	// set up leader
+	r, _, _, mlog := setupRaftTest()
+	r.currentState = raft_candidate
+	r.transitionLeader()
+	r.time = 100
+
+	// TODO calling loadOutboundToReady and using internal functions causes race condition in test env, need to find better workaround
+	go r.loadOutboundToReady()
+	output := <-r.Ready()
+	assert(t, nil != output, "output not nil")
+	mlog.appendRaftEntries(output.WriteLogEntries)
+	r.advance()
+	// make msg append response from follower
+
+	backIndex := uint64(150)
+	backTerm := uint64(2)
+	msg := baselineAppendEntryTestMessage(r)
+	msg.Success = false
+	msg.Type = MESSAGE_APPEND_RESPONSE
+	msg.From = 1
+	msg.To = r.id
+	msg.PreviousLogIndex = backIndex
+	msg.PreviousLogTerm = backTerm
+
+	r.Call(msg)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+	msg = output.SendMessages[0]
+	expectedIndex, _ := mlog.StartOfTerm(2)
+	expectedIndex-- // needs to start at index before no-op
+	expectedTerm := backTerm - 1
+
+	assertEqual(t, "Catch up message should start with first message from term", msg.PreviousLogIndex, expectedIndex)
+	assertEqual(t, "Catch up should have same previous term", msg.PreviousLogTerm, expectedTerm)
+	assertEqual(t, "Catch up sends 100 entries at a time", len(msg.Entries), 100)
+	err := validateEntriesAreSequential(expectedIndex, expectedTerm, msg.Entries)
+	if err != nil {
+		t.Error(err.Error())
+	}
+
+	// call second response from first catch up message
+	// output should have entries starting at the beginning of the term in the follower's response
+	// output should have chunks of 100 entries
+	// second follower response should have up to last catch up entry
+	// leader should send another msg append from follower's last entry until caught up
+
+}
+
+func TestLeaderChecksForQuorumInResponses(t *testing.T) {}
