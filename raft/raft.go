@@ -425,10 +425,7 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 }
 
 func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
-	// msg append response coming in from follower
-	// follower must include it's latest entry index and term
 	followerId := m.From
-	// update tracking with index/term
 	f := r.followTracker[followerId]
 
 	f.lastEntryIndex = m.PreviousLogIndex
@@ -436,20 +433,32 @@ func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
 
 	r.followTracker[followerId] = f
 
-	if m.Success {
-		return
-	}
-
 	if r.lastEntryIndex > f.lastEntryIndex {
-		// get first index of followers latest term
-		// send batch of up to 100 to follower
 		startIndex, err := r.logFile.StartOfTerm(f.lastEntryTerm)
 		if err != nil {
 			startIndex = 1
 		}
 
 		count := min(100, r.lastEntryIndex-f.lastEntryIndex)
-		r.logFile.GetEntries(startIndex, startIndex+count)
+		entries, err := r.logFile.GetEntries(startIndex, startIndex+count)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		err = validateEntriesAreSequential(m.PreviousLogIndex, m.PreviousLogTerm, entries)
+		if err != nil {
+			println(err.Error())
+			return
+		}
+
+		update := genericRaftMessage(MESSAGE_APPEND, r.id, followerId)
+		update.LeaderId = r.id
+		update.LeaderCommit = r.commitIndex
+		update.PreviousLogIndex = m.PreviousLogIndex
+		update.PreviousLogTerm = m.PreviousLogTerm
+		update.Entries = entries
+
+		r.addOutboundMessage(update)
 	}
 
 	r.leaderUpdateCommitIndex()
