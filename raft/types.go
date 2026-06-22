@@ -36,6 +36,7 @@ const (
 	MESSAGE_PREVOTE_RESPONSE
 	MESSAGE_VOTE_REQUEST
 	MESSAGE_VOTE_RESPONSE
+	MESSAGE_NEW_ENTRY
 	MESSAGE_INVALID_REQUEST
 )
 
@@ -72,7 +73,8 @@ type RaftMessage struct {
 	PreviousLogTerm  uint64
 	LeaderCommit     uint64
 
-	Entries []RaftEntry
+	Entries    []RaftEntry
+	RawEntries [][]byte
 
 	// Append entry response
 	Success bool
@@ -148,6 +150,14 @@ type RaftMetadataUpdate struct {
 	CurrentTerm uint64
 }
 
+type followTracker map[uint64]followerStatus
+
+type followerStatus struct {
+	lastEntryTerm  uint64
+	lastEntryIndex uint64
+	isReconciling  bool
+}
+
 type RaftConfig struct {
 	id uint64
 }
@@ -163,7 +173,9 @@ func (rc RaftConfig) Validate() error {
 type RaftLogFile interface {
 	LastLogIndex() (uint64, error)
 	LastLogTerm() (uint64, error)
-	GetEntries(uint64, uint64) ([]RaftEntry, error)
+	GetEntries(start uint64, end uint64) ([]RaftEntry, error)
+	GetEntry(index uint64) (RaftEntry, error)
+	StartOfTerm(termNumber uint64) (uint64, error)
 }
 
 type RaftMetadataFile interface {

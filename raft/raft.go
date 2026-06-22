@@ -3,6 +3,7 @@ package raft
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -18,6 +19,8 @@ type Raft struct { // implements raftInternal interface
 
 	call raftCallFn // use transtion functions to reset op pointers
 	tick raftTickFn
+
+	followTracker followTracker
 
 	currentTerm uint64
 	votedFor    uint64
@@ -138,7 +141,7 @@ func (r *Raft) advance() {
 		r.leader = r.votedFor
 	}
 
-	if r.votedFor == r.id {
+	if r.pending.votedFor == r.id {
 		r.votes++
 	}
 
@@ -212,7 +215,7 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 		return
 	}
 
-	r.addOutboundWriteEntries(m.Entries)
+	r.addOutboundWriteEntries(m.Entries...)
 
 	r.addAppendEntryResponse(true, m.From)
 }
@@ -275,10 +278,12 @@ func (r *Raft) precandidateReceivePrevoteResponse(m RaftMessage) {
 }
 
 func (r *Raft) stepDownToFollowerIfStale(m RaftMessage) {
-	if r.currentTerm >= m.Term {
+	if m.Term <= r.currentTerm {
 		r.addAppendEntryResponse(false, m.From)
+		return
 	}
 
+	r.initFollowTracking()
 	r.transitionFollower()
 	r.callFollower(m)
 }
@@ -371,17 +376,207 @@ func (r *Raft) transitionLeader() {
 	r.currentState = raft_leader
 	r.call = r.callLeader
 	r.tick = r.tickLeader
+	r.leader = r.id
+	r.initFollowTracking()
+
+	r.leaderWriteNewEntries([][]byte{nil})
 }
 
 func (r *Raft) callLeader(m RaftMessage) {
-	println("leader call")
+	switch m.Type {
+	case MESSAGE_NEW_ENTRY:
+		r.leaderWriteNewEntries(m.RawEntries)
+	case MESSAGE_APPEND:
+		r.stepDownToFollowerIfStale(m)
+	case MESSAGE_APPEND_RESPONSE:
+		r.leaderHandleAppendMessageResponse(m)
+	default:
+		r.addResponseToOutput(m.Type, false, false, m.From)
+	}
 }
 
 func (r *Raft) tickLeader() {
-	println("leader tick")
+	r.time++
+	r.leaderSendHeartbeat()
+}
+
+func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
+	newEntries := []RaftEntry{}
+
+	entryIndex := r.lastEntryIndex + 1
+	for _, rawEntry := range rawEntries {
+		entry := newEntry(entryIndex, r.currentTerm, rawEntry)
+		newEntries = append(newEntries, entry)
+		entryIndex++
+	}
+
+	r.addOutboundWriteEntries(newEntries...)
+	msg := RaftMessage{
+		From:             r.id,
+		Type:             MESSAGE_APPEND,
+		Term:             r.currentTerm,
+		PreviousLogIndex: r.lastEntryIndex,
+		PreviousLogTerm:  r.lastEntryTerm,
+		LeaderCommit:     r.commitIndex,
+		Entries:          newEntries,
+	}
+
+	r.sendMessageToAllPeers(msg)
+}
+
+func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
+	followerId := m.From
+	f := r.followTracker[followerId]
+
+	f.lastEntryIndex = m.PreviousLogIndex
+	f.lastEntryTerm = m.PreviousLogTerm
+
+	r.followTracker[followerId] = f
+
+	r.leaderReconcileFollowerEntries(followerId)
+
+	r.leaderUpdateCommitIndex()
+}
+
+func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
+	follower := r.followTracker[id]
+
+	if r.lastEntryIndex == follower.lastEntryIndex {
+		follower.isReconciling = false
+		r.followTracker[id] = follower
+		return
+	}
+
+	if 0 == follower.lastEntryIndex {
+		batchsize := min(100, r.lastEntryIndex)
+		entries, err := r.logFile.GetEntries(1, batchsize)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		msg := r.baselineLeaderAppendMessage(id)
+		msg.PreviousLogTerm = 0
+		msg.PreviousLogIndex = 0
+		msg.Entries = entries
+		r.addOutboundMessage(msg)
+		follower.isReconciling = true
+		r.followTracker[id] = follower
+		return
+	}
+
+	startEntryIndex := follower.lastEntryIndex + 1
+	var err error
+
+	if !follower.isReconciling {
+		startEntryIndex, err = r.logFile.StartOfTerm(follower.lastEntryTerm)
+		if err != nil {
+			panic(err.Error())
+		}
+	}
+
+	follower.isReconciling = true
+	r.followTracker[id] = follower
+
+	previousEntry := RaftEntry{}
+	if 1 < startEntryIndex {
+		previousEntry, err = r.logFile.GetEntry(startEntryIndex - 1)
+		if err != nil {
+			panic(err.Error())
+		}
+	}
+
+	batchSize := min(100, r.lastEntryIndex-startEntryIndex)
+	if r.lastEntryIndex == startEntryIndex {
+		batchSize = 1
+	}
+
+	lastEntryIndex := startEntryIndex + batchSize - 1
+	entries, err := r.logFile.GetEntries(startEntryIndex, lastEntryIndex)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	msg := r.baselineLeaderAppendMessage(id)
+	msg.Entries = entries
+	msg.PreviousLogIndex = previousEntry.Index
+	msg.PreviousLogTerm = previousEntry.Term
+
+	r.addOutboundMessage(msg)
+}
+
+func (r *Raft) baselineLeaderAppendMessage(to uint64) RaftMessage {
+	msg := RaftMessage{
+		Type:             MESSAGE_APPEND,
+		To:               to,
+		From:             r.id,
+		Term:             r.currentTerm,
+		LeaderId:         r.id,
+		LeaderCommit:     r.commitIndex,
+		PreviousLogIndex: r.lastEntryIndex,
+		PreviousLogTerm:  r.lastEntryTerm,
+	}
+
+	return msg
+}
+
+func (r *Raft) leaderUpdateCommitIndex() {
+	if nil == r.followTracker {
+		panic("Follow tracker not initialized")
+	}
+
+	latestEntries := []uint64{r.lastEntryIndex}
+	for _, f := range r.followTracker {
+		latestEntries = append(latestEntries, f.lastEntryIndex)
+	}
+
+	sort.Slice(latestEntries, func(i, j int) bool {
+		return latestEntries[i] > latestEntries[j]
+	})
+
+	// maybe update in case tracking not up to date, safeguard to prevent lowering commit
+	maybeUpdate := latestEntries[len(r.peers)/2]
+	if maybeUpdate < r.commitIndex {
+		return
+	}
+
+	r.commitIndex = max(r.commitIndex, maybeUpdate)
+	r.applyCommittedEntries()
+	r.leaderSendHeartbeat()
+}
+
+func (r *Raft) leaderSendHeartbeat() {
+	msg := RaftMessage{
+		Type:             MESSAGE_APPEND,
+		Term:             r.currentTerm,
+		LeaderId:         r.id,
+		PreviousLogIndex: r.lastEntryIndex,
+		PreviousLogTerm:  r.lastEntryTerm,
+		LeaderCommit:     r.commitIndex,
+	}
+
+	r.sendMessageToAllPeers(msg)
+}
+
+func newEntry(index uint64, term uint64, payload []byte) RaftEntry {
+	return RaftEntry{
+		Index:   index,
+		Term:    term,
+		Payload: payload,
+	}
 }
 
 // HELPERS
+func (r *Raft) sendMessageToAllPeers(m RaftMessage) {
+	messages := []RaftMessage{}
+
+	for _, id := range r.peers {
+		shallowCopy := m
+		shallowCopy.To = id
+		messages = append(messages, shallowCopy)
+	}
+
+	r.addOutboundMessage(messages...)
+}
 
 func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMessage {
 	output := []RaftMessage{}
@@ -422,16 +617,18 @@ func (r *Raft) applyCommittedEntries() {
 		return
 	}
 
-	startIndex := r.lastAppliedIndex
+	startIndex := r.lastAppliedIndex + 1
+
 	endIndex := min(r.commitIndex, r.lastEntryIndex)
 
 	entries, err := r.logFile.GetEntries(startIndex, endIndex)
+
 	if err != nil {
 		msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
 		panic(msg)
 	}
 
-	err = validateEntriesAreSequential(startIndex, entries[0].Term, entries)
+	err = validateEntriesAreSequential(r.lastAppliedIndex, entries[0].Term, entries)
 	if err != nil {
 		msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
 		panic(msg)
@@ -520,6 +717,7 @@ func (r *Raft) addOutboundApplyEntries(entries []RaftEntry) {
 	if 0 == len(entries) {
 		return
 	}
+
 	if nil == r.outbound {
 		r.resetOutbound()
 	}
@@ -531,7 +729,7 @@ func (r *Raft) addOutboundApplyEntries(entries []RaftEntry) {
 	r.outbound.ApplyEntries = append(r.outbound.ApplyEntries, entries...)
 }
 
-func (r *Raft) addOutboundWriteEntries(entries []RaftEntry) {
+func (r *Raft) addOutboundWriteEntries(entries ...RaftEntry) {
 	if 0 == len(entries) {
 		return
 	}
@@ -552,4 +750,19 @@ func (r *Raft) resetOutbound() {
 	}
 
 	r.outbound = ro
+}
+
+func (r *Raft) initFollowTracking() {
+	if r.currentState != raft_leader {
+		r.followTracker = nil
+		return
+	}
+
+	tracker := followTracker{}
+
+	for _, id := range r.peers {
+		tracker[id] = followerStatus{}
+	}
+
+	r.followTracker = tracker
 }
