@@ -118,10 +118,9 @@ func (ro *RaftOutput) generateUpdate() *raftUpdate {
 	update := &raftUpdate{}
 
 	for _, m := range ro.UpdateMetadata {
-		update.votedFor = max(m.VotedFor, update.votedFor)
-	}
-
-	for _, m := range ro.UpdateMetadata {
+		if 0 != m.VotedFor {
+			update.votedFor = m.VotedFor
+		}
 		update.currentTerm = max(m.CurrentTerm, update.currentTerm)
 	}
 
