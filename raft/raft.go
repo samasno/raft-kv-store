@@ -603,14 +603,27 @@ func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMess
 }
 
 func (r *Raft) handleVoteRequest(m RaftMessage) {
-	if r.currentTerm >= m.Term || r.lastEntryIndex > m.PreviousLogIndex {
+	if r.currentTerm > m.Term {
+		r.addVoteResponseToOutput(false, m.From)
+		return
+	}
+
+	if r.votedFor != 0 && r.votedFor != m.CandidateId {
+		r.addVoteResponseToOutput(false, m.From)
+		return
+	}
+
+	if r.lastEntryTerm > m.PreviousLogTerm {
+		r.addVoteResponseToOutput(false, m.From)
+		return
+	}
+	if r.lastEntryTerm == m.PreviousLogTerm && r.lastEntryIndex > m.PreviousLogIndex {
 		r.addVoteResponseToOutput(false, m.From)
 		return
 	}
 
 	r.addOutboundMetadataUpdate(RaftMetadataUpdate{VotedFor: m.CandidateId, CurrentTerm: m.Term})
 	r.addVoteResponseToOutput(true, m.From)
-	r.transitionFollower()
 }
 
 func (r *Raft) applyCommittedEntries() {
