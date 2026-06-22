@@ -209,6 +209,7 @@ func generateNEntries(count, prevIndex, startTerm uint64) []RaftEntry {
 
 func debugPrintEntryIndexes(entries []RaftEntry) {
 	println("***Start Entry Indexes***")
+	println("Total", len(entries))
 	for _, e := range entries {
 		fmt.Printf("Term: %d Index: %d\n", e.Term, e.Index)
 	}
