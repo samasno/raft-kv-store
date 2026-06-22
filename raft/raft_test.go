@@ -333,7 +333,6 @@ func TestCallFollowerVote(t *testing.T) {
 	assertEqual(t, "Sends vote response", vote.Type.String(), MESSAGE_VOTE_RESPONSE.String())
 	assertEqual(t, "Vote is granted to higher term", vote.VoteGranted, true)
 	assertEqual(t, "Term is updated", r.currentTerm, votereq.Term)
-	assertEqual(t, "Leader id is updated", r.leader, votereq.CandidateId)
 	assertEqual(t, "Votedfor is updated", r.votedFor, votereq.CandidateId)
 	assertEqual(t, "Node must be in follower state", r.currentState.String(), raft_follower.String())
 }

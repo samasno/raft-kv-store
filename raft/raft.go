@@ -135,15 +135,14 @@ func (r *Raft) advance() {
 	r.lastAppliedIndex = max(r.lastAppliedIndex, r.pending.lastAppliedIndex)
 	r.lastEntryIndex = max(r.lastEntryIndex, r.pending.lastEntryIndex)
 	r.lastEntryTerm = max(r.lastEntryTerm, r.pending.lastEntryTerm)
-	r.votedFor = max(r.votedFor, r.pending.votedFor)
 
 	if 0 != r.pending.votedFor {
-		r.leader = r.votedFor
+		r.votedFor = r.pending.votedFor
 	}
 
-	if r.pending.votedFor == r.id {
-		r.votes++
-	}
+	// if r.pending.votedFor == r.id {
+	// 	r.votes++
+	// }
 
 	r.pending = nil
 }
@@ -319,6 +318,8 @@ func (r *Raft) transitionCandidate() {
 	r.currentState = raft_candidate
 	r.call = r.callCandidate
 	r.tick = r.tickCandidate
+	r.votedFor = r.id
+	r.votes++
 
 	update := RaftMetadataUpdate{VotedFor: r.id, CurrentTerm: r.currentTerm + 1}
 
