@@ -155,6 +155,7 @@ type followTracker map[uint64]followerStatus
 type followerStatus struct {
 	lastEntryTerm  uint64
 	lastEntryIndex uint64
+	isReconciling  bool
 }
 
 type RaftConfig struct {

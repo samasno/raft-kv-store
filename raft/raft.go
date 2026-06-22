@@ -433,15 +433,17 @@ func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
 
 	r.followTracker[followerId] = f
 
-	r.leaderCatchupFollowerEntries(followerId)
+	r.leaderReconcileFollowerEntries(followerId)
 
 	r.leaderUpdateCommitIndex()
 }
 
-func (r *Raft) leaderCatchupFollowerEntries(id uint64) {
+func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 	follower := r.followTracker[id]
 
 	if r.lastEntryIndex == follower.lastEntryIndex {
+		follower.isReconciling = false
+		r.followTracker[id] = follower
 		return
 	}
 
@@ -457,25 +459,39 @@ func (r *Raft) leaderCatchupFollowerEntries(id uint64) {
 		msg.PreviousLogIndex = 0
 		msg.Entries = entries
 		r.addOutboundMessage(msg)
+		follower.isReconciling = true
+		r.followTracker[id] = follower
 		return
 	}
 
-	termStart, err := r.logFile.StartOfTerm(follower.lastEntryTerm)
-	if err != nil {
-		panic(err.Error())
-	}
+	startEntryIndex := follower.lastEntryIndex + 1
+	var err error
 
-	previousEntry := RaftEntry{}
-	if 1 < termStart {
-		previousEntry, err = r.logFile.GetEntry(termStart - 1)
+	if !follower.isReconciling {
+		startEntryIndex, err = r.logFile.StartOfTerm(follower.lastEntryTerm)
 		if err != nil {
 			panic(err.Error())
 		}
 	}
 
-	batchSize := min(100, r.lastEntryIndex-termStart)
-	lastEntry := termStart + batchSize - 1
-	entries, err := r.logFile.GetEntries(termStart, lastEntry)
+	follower.isReconciling = true
+	r.followTracker[id] = follower
+
+	previousEntry := RaftEntry{}
+	if 1 < startEntryIndex {
+		previousEntry, err = r.logFile.GetEntry(startEntryIndex - 1)
+		if err != nil {
+			panic(err.Error())
+		}
+	}
+
+	batchSize := min(100, r.lastEntryIndex-startEntryIndex)
+	if r.lastEntryIndex == startEntryIndex {
+		batchSize = 1
+	}
+
+	lastEntryIndex := startEntryIndex + batchSize - 1
+	entries, err := r.logFile.GetEntries(startEntryIndex, lastEntryIndex)
 	if err != nil {
 		panic(err.Error())
 	}
