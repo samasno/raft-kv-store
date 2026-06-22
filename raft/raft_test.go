@@ -766,6 +766,7 @@ func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
 	// set up leader
 	r, _, _, mlog := setupRaftTest()
 	r.currentState = raft_candidate
+	r.currentTerm++
 	r.transitionLeader()
 	r.time = 100
 
@@ -776,42 +777,87 @@ func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
 	mlog.appendRaftEntries(output.WriteLogEntries)
 	r.advance()
 	// make msg append response from follower
+	followerId := uint64(1)
 
-	backIndex := uint64(150)
-	backTerm := uint64(2)
-	msg := baselineAppendEntryTestMessage(r)
-	msg.Success = false
-	msg.Type = MESSAGE_APPEND_RESPONSE
-	msg.From = 1
-	msg.To = r.id
-	msg.PreviousLogIndex = backIndex
-	msg.PreviousLogTerm = backTerm
+	backIndex := uint64(250)
+	backTerm := uint64(3)
+	initialFailure := baselineAppendEntryTestMessage(r)
+	initialFailure.Success = false
+	initialFailure.Type = MESSAGE_APPEND_RESPONSE
+	initialFailure.From = followerId
+	initialFailure.To = r.id
+	initialFailure.PreviousLogIndex = backIndex
+	initialFailure.PreviousLogTerm = backTerm
 
-	r.Call(msg)
+	r.Call(initialFailure)
 	output = <-r.Ready()
 	r.Advance()
 
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
-	msg = output.SendMessages[0]
-	expectedIndex, _ := mlog.StartOfTerm(2)
+	firstReconciliation := output.SendMessages[0]
+	expectedIndex, _ := mlog.StartOfTerm(backTerm)
 	expectedIndex-- // needs to start at index before no-op
 	expectedTerm := backTerm - 1
 
-	assertEqual(t, "Catch up message should start with first message from term", msg.PreviousLogIndex, expectedIndex)
-	assertEqual(t, "Catch up should have same previous term", msg.PreviousLogTerm, expectedTerm)
-	assertEqual(t, "Catch up sends 100 entries at a time", len(msg.Entries), 100)
-	err := validateEntriesAreSequential(expectedIndex, expectedTerm, msg.Entries)
+	follower := r.followTracker[followerId]
+	assertEqual(t, "Catch up message should start with first message from term", firstReconciliation.PreviousLogIndex, expectedIndex)
+	assertEqual(t, "Catch up should have same previous term", firstReconciliation.PreviousLogTerm, expectedTerm)
+	assertEqual(t, "Catch up sends 100 entries at a time", len(firstReconciliation.Entries), 100)
+	assertEqual(t, "Follower tracking index updated", follower.lastEntryIndex, backIndex)
+	assertEqual(t, "Follower tracking term is updated", follower.lastEntryTerm, backTerm)
+	assertEqual(t, "Follower should be isReconciling", follower.isReconciling, true)
+	err := validateEntriesAreSequential(expectedIndex, expectedTerm, firstReconciliation.Entries)
 	if err != nil {
 		println("validation error")
 		t.Error(err.Error())
 	}
 
-	// call second response from first catch up message
-	// output should have entries starting at the beginning of the term in the follower's response
-	// output should have chunks of 100 entries
-	// second follower response should have up to last catch up entry
-	// leader should send another msg append from follower's last entry until caught up
+	lastEntry := firstReconciliation.Entries[len(firstReconciliation.Entries)-1]
+	firstResponse := genericRaftMessage(MESSAGE_APPEND_RESPONSE, followerId, r.id)
+	firstResponse.Success = true
+	firstResponse.PreviousLogIndex = lastEntry.Index
+	firstResponse.PreviousLogTerm = lastEntry.Term
 
+	r.Call(firstResponse)
+	output = <-r.Ready()
+	r.Advance()
+
+	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
+	followUp := r.followTracker[followerId]
+	secondReconciliation := output.SendMessages[0]
+	assertEqual(t, "Follower tracking index caught up", followUp.lastEntryIndex, lastEntry.Index)
+	assertEqual(t, "Follower tracking term caught up", followUp.lastEntryTerm, lastEntry.Term)
+	assertEqual(t, "Follower still isReconciling", followUp.isReconciling, true)
+
+	assertEqual(t, "Second reconciliation should should start where last stopped", followUp.lastEntryIndex, secondReconciliation.PreviousLogIndex)
+	assertEqual(t, "Second recon starts at correct index", secondReconciliation.PreviousLogIndex, followUp.lastEntryIndex)
+	assertEqual(t, "Second recon starts at correct term", secondReconciliation.PreviousLogTerm, followUp.lastEntryTerm)
+	validateEntriesAreSequential(secondReconciliation.PreviousLogIndex, secondReconciliation.PreviousLogTerm, secondReconciliation.Entries)
+	lastReconciliationEntry := secondReconciliation.Entries[len(secondReconciliation.Entries)-1]
+	assertEqual(t, "Last entry brings follower up to date", lastReconciliationEntry.Index, r.lastEntryIndex)
+
+	followerUpToDate := baselineAppendEntryTestMessage(r)
+	followerUpToDate.From = followerId
+	followerUpToDate.To = r.id
+	followerUpToDate.Type = MESSAGE_APPEND_RESPONSE
+	followerUpToDate.PreviousLogIndex = lastReconciliationEntry.Index
+	followerUpToDate.PreviousLogTerm = lastReconciliationEntry.Term
+
+	r.Call(followerUpToDate)
+	finalOutput := <-r.Ready()
+	r.Advance()
+
+	assert(t, nil == finalOutput, "Final output is nil")
+	followUp = r.followTracker[followerId]
+	assertEqual(t, "Follower is not isReconciling", followUp.isReconciling, false)
+	assertEqual(t, "Follower is up to date", followUp.lastEntryIndex, r.lastEntryIndex)
+	assertEqual(t, "Follower up to term", followUp.lastEntryTerm, r.lastEntryTerm)
+
+	combinedEntries := []RaftEntry{}
+	combinedEntries = append(combinedEntries, firstReconciliation.Entries...)
+	combinedEntries = append(combinedEntries, secondReconciliation.Entries...)
+	err = validateEntriesAreSequential(expectedIndex, expectedTerm, combinedEntries)
+	if err != nil {
+		t.Error(err.Error())
+	}
 }
-
-func TestLeaderChecksForQuorumInResponses(t *testing.T) {}
