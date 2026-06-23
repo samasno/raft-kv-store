@@ -140,9 +140,9 @@ func (r *Raft) advance() {
 		r.votedFor = r.pending.votedFor
 	}
 
-	// if r.pending.votedFor == r.id {
-	// 	r.votes++
-	// }
+	if r.currentTerm < r.pending.currentTerm {
+		r.votedFor = 0
+	}
 
 	r.pending = nil
 }

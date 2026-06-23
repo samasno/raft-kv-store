@@ -130,7 +130,7 @@ func baseValidationCycleOutput(t *testing.T, output *RaftOutput, sendLen, mdataL
 
 func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	id := uint64(9)
-	votedFor := uint64(7)
+	votedFor := uint64(0)
 	startTime := uint64(100)
 
 	termOne := generateNEntries(100, 0, 1)
@@ -148,7 +148,7 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	}
 
 	conf := RaftConfig{id}
-	mdata := newInMemoryMetadataFile(votedFor, 3)
+	mdata := newInMemoryMetadataFile(votedFor, 0)
 
 	r, _ := NewRaftInstance(mdata, mlog, conf)
 
