@@ -4,14 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 )
 
 type Raft struct { // implements raftInternal interface
 	id           uint64
 	currentState raftState
 	time         uint64
-	mtx          *sync.Mutex // use if external dependencies come up
 	metadataFile RaftMetadataFile
 	logFile      RaftLogFile // external read only source
 	peers        []uint64
@@ -59,7 +57,6 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 	r := &Raft{}
 	r.transitionFollower()
 	r.id = conf.id
-	r.mtx = &sync.Mutex{}
 	r.electionTimeout = randomTimeout(10, 20)
 	r.callc = make(chan RaftMessage)
 	r.tickc = make(chan struct{})
