@@ -153,7 +153,7 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	r, _ := NewRaftInstance(mdata, mlog, conf)
 
 	r.time = startTime
-	r.leader = votedFor
+	r.leader = 1
 	lastLog, _ := mlog.LastLogIndex()
 	r.lastEntryIndex = lastLog
 	r.lastAppliedIndex = lastLog
