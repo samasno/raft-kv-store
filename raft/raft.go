@@ -41,11 +41,17 @@ type Raft struct { // implements raftInternal interface
 	donec    chan struct{}
 	outbound *RaftOutput
 	pending  *raftUpdate
+
+	logger *Logger
 }
 
 func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Raft, error) {
+	err := conf.Validate()
+	if err != nil {
+		return nil, err
+	}
+
 	if nil == md {
-		// log here
 		return nil, errors.New("No metadata provided")
 	}
 
@@ -56,31 +62,36 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 
 	r := &Raft{}
 	r.transitionFollower()
-	r.id = conf.id
+	r.id = conf.Id
 	r.electionTimeout = randomTimeout(10, 20)
+	r.peers = conf.Peers
 	r.callc = make(chan RaftMessage)
 	r.tickc = make(chan struct{})
 	r.advancec = make(chan struct{})
 	r.donec = make(chan struct{})
 	r.readyc = make(chan *RaftOutput)
-
+	r.logger = NewLogger(Loglevel(conf.LogLevel))
 	r.metadataFile = md
 	r.logFile = log
 
-	var err error
 	r.lastEntryIndex, err = r.logFile.LastLogIndex()
 	if err != nil {
-		// log here
-		panic("Log file failure")
+		return nil, err
 	}
 
 	r.lastEntryTerm, err = r.logFile.LastLogTerm()
 	if err != nil {
-		panic("Log file failure")
+		return nil, err
 	}
 
-	r.votedFor = r.metadataFile.VotedFor()
-	r.currentTerm = r.metadataFile.CurrentTerm()
+	r.votedFor, err = r.metadataFile.VotedFor()
+	if err != nil {
+		return nil, err
+	}
+	r.currentTerm, err = r.metadataFile.CurrentTerm()
+	if err != nil {
+		return nil, err
+	}
 
 	go r.run()
 
@@ -449,7 +460,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 		batchsize := min(100, r.lastEntryIndex)
 		entries, err := r.logFile.GetEntries(1, batchsize)
 		if err != nil {
-			panic(err.Error())
+			// log here
+			r.addLogFileErrorOutput()
+			return
 		}
 
 		msg := r.baselineLeaderAppendMessage(id)
@@ -468,7 +481,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 	if !follower.isReconciling {
 		startEntryIndex, err = r.logFile.StartOfTerm(follower.lastEntryTerm)
 		if err != nil {
-			panic(err.Error())
+			// log here
+			r.addLogFileErrorOutput()
+			return
 		}
 	}
 
@@ -479,7 +494,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 	if 1 < startEntryIndex {
 		previousEntry, err = r.logFile.GetEntry(startEntryIndex - 1)
 		if err != nil {
-			panic(err.Error())
+			// log here
+			r.addLogFileErrorOutput()
+			return
 		}
 	}
 
@@ -491,7 +508,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 	lastEntryIndex := startEntryIndex + batchSize - 1
 	entries, err := r.logFile.GetEntries(startEntryIndex, lastEntryIndex)
 	if err != nil {
-		panic(err.Error())
+		// log here
+		r.addLogFileErrorOutput()
+		return
 	}
 
 	msg := r.baselineLeaderAppendMessage(id)
@@ -633,16 +652,19 @@ func (r *Raft) applyCommittedEntries() {
 	endIndex := min(r.commitIndex, r.lastEntryIndex)
 
 	entries, err := r.logFile.GetEntries(startIndex, endIndex)
-
 	if err != nil {
-		msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
-		panic(msg)
+		//msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
+		// log here
+		r.addLogFileErrorOutput()
+		return
 	}
 
 	err = validateEntriesAreSequential(r.lastAppliedIndex, entries[0].Term, entries)
 	if err != nil {
-		msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
-		panic(msg)
+		//msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
+		// log here
+		r.addLogFileErrorOutput()
+		return
 	}
 
 	r.addOutboundApplyEntries(entries)
@@ -776,4 +798,20 @@ func (r *Raft) initFollowTracking() {
 	}
 
 	r.followTracker = tracker
+}
+
+func (r *Raft) addMetadataFileErrorOutput() {
+	if nil == r.outbound {
+		r.resetOutbound()
+	}
+
+	r.outbound.MetadataFileError = true
+}
+
+func (r *Raft) addLogFileErrorOutput() {
+	if nil == r.outbound {
+		r.resetOutbound()
+	}
+
+	r.outbound.LogFileError = true
 }

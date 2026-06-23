@@ -91,12 +91,12 @@ func newInMemoryMetadataFile(votedFor uint64, currentTerm uint64) *inMemoryMetad
 	}
 }
 
-func (ms *inMemoryMetadataFile) CurrentTerm() uint64 {
-	return ms.currentTerm
+func (ms *inMemoryMetadataFile) CurrentTerm() (uint64, error) {
+	return ms.currentTerm, nil
 }
 
-func (ms *inMemoryMetadataFile) VotedFor() uint64 {
-	return ms.votedFor
+func (ms *inMemoryMetadataFile) VotedFor() (uint64, error) {
+	return ms.votedFor, nil
 }
 
 func updateInMemoryMetadata(ms *inMemoryMetadataFile, term uint64, voteeId uint64) {
@@ -147,7 +147,10 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 		panic("Entries invalid in raft setup")
 	}
 
-	conf := RaftConfig{id}
+	conf := RaftConfig{
+		Id:    id,
+		Peers: []uint64{1, 2, 3, 4},
+	}
 	mdata := newInMemoryMetadataFile(votedFor, 0)
 
 	r, _ := NewRaftInstance(mdata, mlog, conf)
@@ -159,7 +162,6 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	r.lastAppliedIndex = lastLog
 	r.commitIndex = lastLog
 	r.currentTerm, _ = mlog.LastLogTerm()
-	r.peers = []uint64{1, 2, 3, 4}
 
 	defaults := *r
 

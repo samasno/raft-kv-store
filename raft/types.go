@@ -1,6 +1,9 @@
 package raft
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 type raftState uint8
 
@@ -54,6 +57,7 @@ func (rm RaftMessageType) String() string {
 		return "MessageVoteRequest"
 	case MessageVoteResponse:
 		return "MessageVoteResponse"
+
 	}
 
 	return "INVALID MESSAGE"
@@ -105,10 +109,12 @@ type ApplicationEntry struct {
 }
 
 type RaftOutput struct {
-	UpdateMetadata  []RaftMetadataUpdate
-	SendMessages    []RaftMessage
-	WriteLogEntries []RaftEntry
-	ApplyEntries    []RaftEntry
+	UpdateMetadata    []RaftMetadataUpdate
+	SendMessages      []RaftMessage
+	WriteLogEntries   []RaftEntry
+	ApplyEntries      []RaftEntry
+	LogFileError      bool
+	MetadataFileError bool
 }
 
 func (ro *RaftOutput) generateUpdate() *raftUpdate {
@@ -158,12 +164,24 @@ type followerStatus struct {
 }
 
 type RaftConfig struct {
-	id uint64
+	Id       uint64
+	Peers    []uint64
+	LogLevel uint8
 }
 
 func (rc RaftConfig) Validate() error {
-	if rc.id == 0 {
+	if rc.Id == 0 {
 		return errors.New("Raft id cannot be 0")
+	}
+
+	for _, id := range rc.Peers {
+		if rc.Id == id {
+			return errors.New("Cannot have own id in peers")
+		}
+	}
+
+	if rc.LogLevel > uint8(Debug) {
+		return fmt.Errorf("Max log level is %d", Debug)
 	}
 
 	return nil
@@ -178,8 +196,8 @@ type RaftLogFile interface {
 }
 
 type RaftMetadataFile interface {
-	CurrentTerm() uint64
-	VotedFor() uint64
+	CurrentTerm() (uint64, error)
+	VotedFor() (uint64, error)
 }
 
 type raftCallFn func(m RaftMessage)
