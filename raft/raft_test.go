@@ -42,7 +42,7 @@ func TestCallFollowerHeartbeatSameTerm(t *testing.T) {
 	}
 
 	heartbeat := RaftMessage{
-		Type:         MESSAGE_APPEND,
+		Type:         MessageAppend,
 		To:           r.id,
 		From:         r.leader,
 		Term:         r.currentTerm,
@@ -63,7 +63,7 @@ func TestCallFollowerHeartbeatSameTerm(t *testing.T) {
 
 	successMessage := output.SendMessages[0]
 	assertEqual(t, "Success response", successMessage.Success, true)
-	assertEqual(t, "Got RESPONSE type message", successMessage.Type.String(), MESSAGE_APPEND_RESPONSE.String())
+	assertEqual(t, "Got RESPONSE type message", successMessage.Type.String(), MessageAppendResponse.String())
 	assertEqual(t, "Correct TO in response", successMessage.To, r.leader)
 	assertEqual(t, "Correct FROM in response", successMessage.From, r.id)
 	assertEqual(t, "Expected current term", successMessage.Term, r.currentTerm)
@@ -78,7 +78,7 @@ func TestCallFollowerHeartbeatOldTermLeader(t *testing.T) {
 	assertEqual(t, "Expected elapsedElection to increase", r.electionElapsed, uint64(n))
 
 	heartbeat := RaftMessage{
-		Type:         MESSAGE_APPEND,
+		Type:         MessageAppend,
 		To:           r.id,
 		From:         r.leader,
 		Term:         r.currentTerm - 1,
@@ -100,7 +100,7 @@ func TestCallFollowerHeartbeatOldTermLeader(t *testing.T) {
 	failure := output.SendMessages[0]
 	assertEqual(t, "Expect failure response", failure.Success, false)
 	assertEqual(t, "Correct TO in response", failure.To, r.leader)
-	assertEqual(t, "Got RESPONSE type message", failure.Type.String(), MESSAGE_APPEND_RESPONSE.String())
+	assertEqual(t, "Got RESPONSE type message", failure.Type.String(), MessageAppendResponse.String())
 	assertEqual(t, "Correct FROM in response", failure.From, r.id)
 	assertEqual(t, "Expected current term", failure.Term, r.currentTerm)
 }
@@ -215,7 +215,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 
 	msg := baselineAppendEntryTestMessage(r)
 
-	msg.Type = MESSAGE_PREVOTE_REQUEST
+	msg.Type = MessagePrevoteRequest
 	msg.PreviousLogIndex = defaults.lastEntryIndex
 	msg.PreviousLogTerm = defaults.currentTerm
 	msg.CandidateId = 1
@@ -231,7 +231,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
 
 	prevote := output.SendMessages[0]
-	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MessagePrevoteResponse.String())
 	assertEqual(t, "Prevote is granted for equal term and index", prevote.VoteGranted, true)
 
 	// ACCEPT LATER TERM
@@ -245,7 +245,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
 
 	prevote = output.SendMessages[0]
-	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MessagePrevoteResponse.String())
 	assertEqual(t, "Prevote is granted for greater term", prevote.VoteGranted, true)
 
 	// REJECT LOWER LOG INDEX
@@ -259,7 +259,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
 
 	prevote = output.SendMessages[0]
-	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MessagePrevoteResponse.String())
 	assertEqual(t, "Prevote is rejected for lower log index", prevote.VoteGranted, false)
 
 	// REJECT LOWER TERM
@@ -274,7 +274,7 @@ func TestCallFollowerPrevoteResponse(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
 
 	prevote = output.SendMessages[0]
-	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_PREVOTE_RESPONSE.String())
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MessagePrevoteResponse.String())
 	assertEqual(t, "Prevote is rejected for lower log index", prevote.VoteGranted, false)
 }
 
@@ -284,7 +284,7 @@ func TestCallFollowerVote(t *testing.T) {
 
 	novotereq := baselineAppendEntryTestMessage(r)
 
-	novotereq.Type = MESSAGE_VOTE_REQUEST
+	novotereq.Type = MessageVoteRequest
 	novotereq.CandidateId = 999
 	novotereq.PreviousLogIndex = defaults.lastEntryIndex
 	novotereq.PreviousLogTerm = defaults.currentTerm - 1
@@ -296,13 +296,13 @@ func TestCallFollowerVote(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
 
 	prevote := output.SendMessages[0]
-	assertEqual(t, "Sends vote response", prevote.Type.String(), MESSAGE_VOTE_RESPONSE.String())
+	assertEqual(t, "Sends vote response", prevote.Type.String(), MessageVoteResponse.String())
 	assertEqual(t, "Vote is rejected for lower term", prevote.VoteGranted, false)
 	assertEqual(t, "Term is not updated", r.currentTerm, defaults.currentTerm)
 
 	// REJECT LOWER INDEX
 
-	novotereq.Type = MESSAGE_VOTE_REQUEST
+	novotereq.Type = MessageVoteRequest
 	novotereq.CandidateId = 999
 	novotereq.PreviousLogIndex = defaults.lastEntryIndex - 2
 	novotereq.PreviousLogTerm = defaults.currentTerm
@@ -314,14 +314,14 @@ func TestCallFollowerVote(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 0, 0, 0)
 
 	prevote = output.SendMessages[0]
-	assertEqual(t, "Sends prevote response", prevote.Type.String(), MESSAGE_VOTE_RESPONSE.String())
+	assertEqual(t, "Sends prevote response", prevote.Type.String(), MessageVoteResponse.String())
 	assertEqual(t, "Prevote is rejected for lower index", prevote.VoteGranted, false)
 	assertEqual(t, "Term is not updated", r.currentTerm, defaults.currentTerm)
 
 	// GRANT VOTE HIGHER TERM
 	votereq := baselineAppendEntryTestMessage(r)
 	votereq.CandidateId = 999
-	votereq.Type = MESSAGE_VOTE_REQUEST
+	votereq.Type = MessageVoteRequest
 	votereq.Term = defaults.currentTerm + 1
 	r.Call(votereq)
 	output = <-r.Ready()
@@ -330,10 +330,9 @@ func TestCallFollowerVote(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 1, 0, 0)
 
 	vote := output.SendMessages[0]
-	assertEqual(t, "Sends vote response", vote.Type.String(), MESSAGE_VOTE_RESPONSE.String())
+	assertEqual(t, "Sends vote response", vote.Type.String(), MessageVoteResponse.String())
 	assertEqual(t, "Vote is granted to higher term", vote.VoteGranted, true)
 	assertEqual(t, "Term is updated", r.currentTerm, votereq.Term)
-	assertEqual(t, "Leader id is updated", r.leader, votereq.CandidateId)
 	assertEqual(t, "Votedfor is updated", r.votedFor, votereq.CandidateId)
 	assertEqual(t, "Node must be in follower state", r.currentState.String(), raft_follower.String())
 }
@@ -353,7 +352,7 @@ func TestTransitionToPrecandidate(t *testing.T) {
 	assertEqual(t, "Election elapsed is reset", r.electionElapsed, 0)
 
 	for i, msg := range output.SendMessages {
-		assertEqual(t, "Sent prevote request", msg.Type.String(), MESSAGE_PREVOTE_REQUEST.String())
+		assertEqual(t, "Sent prevote request", msg.Type.String(), MessagePrevoteRequest.String())
 		assertEqual(t, "Sent from precandidate", msg.From, r.id)
 		assertEqual(t, "Sent with precandidate id", msg.CandidateId, r.id)
 		assertEqual(t, "Sent with last entry index", msg.PreviousLogIndex, r.lastEntryIndex)
@@ -368,11 +367,11 @@ func TestPrecandidateAcceptsVotesAndTransitions(t *testing.T) {
 
 	r.peers = []uint64{1, 2, 3, 4}
 
-	grant := genericRaftMessage(MESSAGE_PREVOTE_RESPONSE, 1, r.id)
+	grant := genericRaftMessage(MessagePrevoteResponse, 1, r.id)
 	grant.Term = r.currentTerm
 	grant.VoteGranted = true
 
-	reject := genericRaftMessage(MESSAGE_PREVOTE_RESPONSE, 1, r.id)
+	reject := genericRaftMessage(MessagePrevoteResponse, 1, r.id)
 	reject.Term = r.currentTerm
 	reject.VoteGranted = false
 
@@ -419,7 +418,7 @@ func TestPrecandidateStepsDownToFollowerOnHeartbeat(t *testing.T) {
 
 	assertEqual(t, "In precandidate state", r.currentState.String(), raft_precandidate.String())
 
-	msg := genericRaftMessage(MESSAGE_APPEND, 1, r.id)
+	msg := genericRaftMessage(MessageAppend, 1, r.id)
 	msg.LeaderId = msg.From
 	msg.Term = r.currentTerm + 1
 	msg.PreviousLogIndex = r.lastEntryIndex
@@ -432,7 +431,7 @@ func TestPrecandidateStepsDownToFollowerOnHeartbeat(t *testing.T) {
 	baseValidationCycleOutput(t, output, 1, 1, 0, 0)
 
 	response := output.SendMessages[0]
-	assertEqual(t, "Sends append entry response", response.Type.String(), MESSAGE_APPEND_RESPONSE.String())
+	assertEqual(t, "Sends append entry response", response.Type.String(), MessageAppendResponse.String())
 	assertEqual(t, "Sends success response", response.Success, true)
 
 	update := output.UpdateMetadata[0]
@@ -462,7 +461,7 @@ func TestTransitionToCandidate(t *testing.T) {
 	assertEqual(t, "Candidate voted for self", r.votes, 1)
 
 	for i, msg := range output.SendMessages {
-		assertEqual(t, "Sent vote request", msg.Type.String(), MESSAGE_VOTE_REQUEST.String())
+		assertEqual(t, "Sent vote request", msg.Type.String(), MessageVoteRequest.String())
 		assertEqual(t, "Sent from candidate", msg.From, r.id)
 		assertEqual(t, "Sent with candidate id", msg.CandidateId, r.id)
 		assertEqual(t, "Sent with last entry index", msg.PreviousLogIndex, r.lastEntryIndex)
@@ -499,7 +498,7 @@ func TestCandidateStepsDownWhenBehindTerm(t *testing.T) {
 	response := output.SendMessages[0]
 	assertEqual(t, "Sent success response", response.Success, true)
 	assertEqual(t, "Responds with latest term", response.Term, latestTerm)
-	assertEqual(t, "Sent append response type", response.Type.String(), MESSAGE_APPEND_RESPONSE.String())
+	assertEqual(t, "Sent append response type", response.Type.String(), MessageAppendResponse.String())
 	// update with votefor and new term
 	update := output.UpdateMetadata[0]
 	assertEqual(t, "Updates to correct term", update.CurrentTerm, msg.Term)
@@ -522,7 +521,7 @@ func TestCandidateVotesTransitionToLeader(t *testing.T) {
 
 	assert(t, r.currentState == raft_candidate && r.electionElapsed == 0 && r.currentTerm == defaults.currentTerm+1, "Baseline candidate established")
 
-	reject := genericRaftMessage(MESSAGE_VOTE_RESPONSE, 1, r.id)
+	reject := genericRaftMessage(MessageVoteResponse, 1, r.id)
 	reject.Term = r.currentTerm
 	reject.VoteGranted = false
 
@@ -547,7 +546,7 @@ func TestCandidateVotesTransitionToLeader(t *testing.T) {
 		assertEqual(t, "Must stay in precandidate state", r.currentState.String(), raft_candidate.String())
 	}
 
-	grant := genericRaftMessage(MESSAGE_VOTE_RESPONSE, 1, r.id)
+	grant := genericRaftMessage(MessageVoteResponse, 1, r.id)
 	grant.Term = r.currentTerm
 	grant.VoteGranted = true
 
@@ -620,7 +619,7 @@ func TestTransitionToLeader(t *testing.T) {
 	assertEqual(t, "Correct index on entry", entry.Index, defaults.lastEntryIndex+1)
 	assertEqual(t, "Correct term on entry", entry.Term, r.currentTerm)
 	for _, msg := range output.SendMessages {
-		assertEqual(t, "Sends append msg", msg.Type.String(), MESSAGE_APPEND.String()) // sends append entry type
+		assertEqual(t, "Sends append msg", msg.Type.String(), MessageAppend.String()) // sends append entry type
 		assertEqual(t, "Payload is 0 len", len(msg.Entries[0].Payload), 0)
 		assertEqual(t, "Term does not change", msg.Term, defaults.currentTerm)
 	}
@@ -649,7 +648,7 @@ func TestLeaderSendsHeartbeatOnTick(t *testing.T) {
 		baseValidationCycleOutput(t, output, len(r.peers), 0, 0, 0)
 		for j, msg := range output.SendMessages {
 			assertEqual(t, "Addressed to a peer", msg.To, r.peers[j])
-			assertEqual(t, "Sent append message", msg.Type.String(), MESSAGE_APPEND.String())
+			assertEqual(t, "Sent append message", msg.Type.String(), MessageAppend.String())
 			assertEqual(t, "Previous entry has correct term", msg.PreviousLogTerm, r.currentTerm)
 			assertEqual(t, "Previous entry correct index", msg.PreviousLogIndex, r.lastEntryIndex)
 			assertEqual(t, "Sent with correct commit", msg.LeaderCommit, r.commitIndex)
@@ -676,7 +675,7 @@ func TestLeaderSendsNewWritesToAllFollowers(t *testing.T) {
 	startIndex := r.lastEntryIndex
 
 	msg := RaftMessage{
-		Type:       MESSAGE_NEW_ENTRY,
+		Type:       MessageNewEntry,
 		RawEntries: rawEntries,
 	}
 
@@ -694,7 +693,7 @@ func TestLeaderSendsNewWritesToAllFollowers(t *testing.T) {
 
 	for i, msg := range output.SendMessages {
 		assertEqual(t, "Addressed to a peer", msg.To, r.peers[i])
-		assertEqual(t, "Sent append message", msg.Type.String(), MESSAGE_APPEND.String())
+		assertEqual(t, "Sent append message", msg.Type.String(), MessageAppend.String())
 		assertEqual(t, "Previous entry has correct term", msg.PreviousLogTerm, defaults.currentTerm)
 		assertEqual(t, "Previous entry correct index", msg.PreviousLogIndex, startIndex)
 		assertEqual(t, "Sent with correct commit", msg.LeaderCommit, r.commitIndex)
@@ -726,7 +725,7 @@ func TestLeaderSendsUpdateForCommit(t *testing.T) {
 	startApplied := r.lastAppliedIndex
 
 	msg := RaftMessage{
-		Type:       MESSAGE_NEW_ENTRY,
+		Type:       MessageNewEntry,
 		RawEntries: rawEntries,
 	}
 
@@ -740,12 +739,12 @@ func TestLeaderSendsUpdateForCommit(t *testing.T) {
 	mlog.appendRaftEntries(output.WriteLogEntries)
 
 	response1 := baselineAppendEntryTestMessage(r)
-	response1.Type = MESSAGE_APPEND_RESPONSE
+	response1.Type = MessageAppendResponse
 	response1.To = r.id
 	response1.From = 2
 
 	response2 := baselineAppendEntryTestMessage(r)
-	response2.Type = MESSAGE_APPEND_RESPONSE
+	response2.Type = MessageAppendResponse
 	response2.To = r.id
 	response2.From = 3
 
@@ -783,7 +782,7 @@ func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
 	backTerm := uint64(3)
 	initialFailure := baselineAppendEntryTestMessage(r)
 	initialFailure.Success = false
-	initialFailure.Type = MESSAGE_APPEND_RESPONSE
+	initialFailure.Type = MessageAppendResponse
 	initialFailure.From = followerId
 	initialFailure.To = r.id
 	initialFailure.PreviousLogIndex = backIndex
@@ -813,7 +812,7 @@ func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
 	}
 
 	lastEntry := firstReconciliation.Entries[len(firstReconciliation.Entries)-1]
-	firstResponse := genericRaftMessage(MESSAGE_APPEND_RESPONSE, followerId, r.id)
+	firstResponse := genericRaftMessage(MessageAppendResponse, followerId, r.id)
 	firstResponse.Success = true
 	firstResponse.PreviousLogIndex = lastEntry.Index
 	firstResponse.PreviousLogTerm = lastEntry.Term
@@ -839,7 +838,7 @@ func TestLeaderCorrectsFollowerThatsBehind(t *testing.T) {
 	followerUpToDate := baselineAppendEntryTestMessage(r)
 	followerUpToDate.From = followerId
 	followerUpToDate.To = r.id
-	followerUpToDate.Type = MESSAGE_APPEND_RESPONSE
+	followerUpToDate.Type = MessageAppendResponse
 	followerUpToDate.PreviousLogIndex = lastReconciliationEntry.Index
 	followerUpToDate.PreviousLogTerm = lastReconciliationEntry.Term
 

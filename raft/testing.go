@@ -91,12 +91,12 @@ func newInMemoryMetadataFile(votedFor uint64, currentTerm uint64) *inMemoryMetad
 	}
 }
 
-func (ms *inMemoryMetadataFile) CurrentTerm() uint64 {
-	return ms.currentTerm
+func (ms *inMemoryMetadataFile) CurrentTerm() (uint64, error) {
+	return ms.currentTerm, nil
 }
 
-func (ms *inMemoryMetadataFile) VotedFor() uint64 {
-	return ms.votedFor
+func (ms *inMemoryMetadataFile) VotedFor() (uint64, error) {
+	return ms.votedFor, nil
 }
 
 func updateInMemoryMetadata(ms *inMemoryMetadataFile, term uint64, voteeId uint64) {
@@ -130,7 +130,7 @@ func baseValidationCycleOutput(t *testing.T, output *RaftOutput, sendLen, mdataL
 
 func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 	id := uint64(9)
-	votedFor := uint64(7)
+	votedFor := uint64(0)
 	startTime := uint64(100)
 
 	termOne := generateNEntries(100, 0, 1)
@@ -147,19 +147,21 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 		panic("Entries invalid in raft setup")
 	}
 
-	conf := RaftConfig{id}
-	mdata := newInMemoryMetadataFile(votedFor, 3)
+	conf := RaftConfig{
+		Id:    id,
+		Peers: []uint64{1, 2, 3, 4},
+	}
+	mdata := newInMemoryMetadataFile(votedFor, 0)
 
 	r, _ := NewRaftInstance(mdata, mlog, conf)
 
 	r.time = startTime
-	r.leader = votedFor
+	r.leader = 1
 	lastLog, _ := mlog.LastLogIndex()
 	r.lastEntryIndex = lastLog
 	r.lastAppliedIndex = lastLog
 	r.commitIndex = lastLog
 	r.currentTerm, _ = mlog.LastLogTerm()
-	r.peers = []uint64{1, 2, 3, 4}
 
 	defaults := *r
 
@@ -168,7 +170,7 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 
 func baselineAppendEntryTestMessage(r *Raft) RaftMessage {
 	m := RaftMessage{
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		To:               r.id,
 		From:             r.leader,
 		Term:             r.currentTerm,

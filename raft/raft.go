@@ -4,14 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 )
 
 type Raft struct { // implements raftInternal interface
 	id           uint64
 	currentState raftState
 	time         uint64
-	mtx          *sync.Mutex // use if external dependencies come up
 	metadataFile RaftMetadataFile
 	logFile      RaftLogFile // external read only source
 	peers        []uint64
@@ -43,11 +41,17 @@ type Raft struct { // implements raftInternal interface
 	donec    chan struct{}
 	outbound *RaftOutput
 	pending  *raftUpdate
+
+	logger *Logger
 }
 
 func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Raft, error) {
+	err := conf.Validate()
+	if err != nil {
+		return nil, err
+	}
+
 	if nil == md {
-		// log here
 		return nil, errors.New("No metadata provided")
 	}
 
@@ -58,32 +62,36 @@ func NewRaftInstance(md RaftMetadataFile, log RaftLogFile, conf RaftConfig) (*Ra
 
 	r := &Raft{}
 	r.transitionFollower()
-	r.id = conf.id
-	r.mtx = &sync.Mutex{}
+	r.id = conf.Id
 	r.electionTimeout = randomTimeout(10, 20)
+	r.peers = conf.Peers
 	r.callc = make(chan RaftMessage)
 	r.tickc = make(chan struct{})
 	r.advancec = make(chan struct{})
 	r.donec = make(chan struct{})
 	r.readyc = make(chan *RaftOutput)
-
+	r.logger = NewLogger(Loglevel(conf.LogLevel))
 	r.metadataFile = md
 	r.logFile = log
 
-	var err error
 	r.lastEntryIndex, err = r.logFile.LastLogIndex()
 	if err != nil {
-		// log here
-		panic("Log file failure")
+		return nil, err
 	}
 
 	r.lastEntryTerm, err = r.logFile.LastLogTerm()
 	if err != nil {
-		panic("Log file failure")
+		return nil, err
 	}
 
-	r.votedFor = r.metadataFile.VotedFor()
-	r.currentTerm = r.metadataFile.CurrentTerm()
+	r.votedFor, err = r.metadataFile.VotedFor()
+	if err != nil {
+		return nil, err
+	}
+	r.currentTerm, err = r.metadataFile.CurrentTerm()
+	if err != nil {
+		return nil, err
+	}
 
 	go r.run()
 
@@ -135,14 +143,13 @@ func (r *Raft) advance() {
 	r.lastAppliedIndex = max(r.lastAppliedIndex, r.pending.lastAppliedIndex)
 	r.lastEntryIndex = max(r.lastEntryIndex, r.pending.lastEntryIndex)
 	r.lastEntryTerm = max(r.lastEntryTerm, r.pending.lastEntryTerm)
-	r.votedFor = max(r.votedFor, r.pending.votedFor)
 
 	if 0 != r.pending.votedFor {
-		r.leader = r.votedFor
+		r.votedFor = r.pending.votedFor
 	}
 
-	if r.pending.votedFor == r.id {
-		r.votes++
+	if r.currentTerm < r.pending.currentTerm {
+		r.votedFor = 0
 	}
 
 	r.pending = nil
@@ -162,12 +169,13 @@ func (r *Raft) transitionFollower() {
 
 func (r *Raft) tickFollower() {
 	if r.currentState != raft_follower {
-		// log here exact state transition
+		r.logger.Error("Called tickFollower form invalid state %s", r.currentState)
 		panic("Raft: tickFollower called from invalid state")
 	}
 	r.time++
 	r.electionElapsed++
 	if r.electionElapsed > r.electionTimeout {
+		r.logger.Info("Transitioning into candidate state")
 		r.transitionPrecandidate()
 		return
 	}
@@ -175,24 +183,26 @@ func (r *Raft) tickFollower() {
 
 func (r *Raft) callFollower(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.followerAppendEntry(m)
-	case MESSAGE_PREVOTE_REQUEST:
+	case MessagePrevoteRequest:
 		r.followerReplyPrevoteRequest(m)
-	case MESSAGE_VOTE_REQUEST:
+	case MessageVoteRequest:
 		r.handleVoteRequest(m)
 	default:
-		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
 func (r *Raft) followerAppendEntry(m RaftMessage) {
 	if m.Term < r.currentTerm {
+		r.logger.Info("Append rejected with message term %d and current term %d", m.Term, r.currentTerm)
 		r.addAppendEntryResponse(false, m.From)
 		return
 	}
 
 	if m.LeaderId == 0 {
+		r.logger.Info("Append rejected due to no leader id ")
 		r.addAppendEntryResponse(false, m.From)
 		return
 	}
@@ -253,14 +263,14 @@ func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
 
 func (r *Raft) callPrecandidate(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_PREVOTE_RESPONSE:
+	case MessagePrevoteResponse:
 		r.precandidateReceivePrevoteResponse(m)
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.stepDownToFollowerIfStale(m)
-	case MESSAGE_VOTE_REQUEST:
+	case MessageVoteRequest:
 		r.handleVoteRequest(m)
 	default:
-		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -309,7 +319,7 @@ func (r *Raft) transitionPrecandidate() {
 }
 
 func (r *Raft) sendPrecandidateCampaign() {
-	messages := r.generateBroadcastMessages(MESSAGE_PREVOTE_REQUEST)
+	messages := r.generateBroadcastMessages(MessagePrevoteRequest)
 	r.addOutboundMessage(messages...)
 }
 
@@ -319,6 +329,8 @@ func (r *Raft) transitionCandidate() {
 	r.currentState = raft_candidate
 	r.call = r.callCandidate
 	r.tick = r.tickCandidate
+	r.votedFor = r.id
+	r.votes++
 
 	update := RaftMetadataUpdate{VotedFor: r.id, CurrentTerm: r.currentTerm + 1}
 
@@ -327,18 +339,18 @@ func (r *Raft) transitionCandidate() {
 }
 
 func (r *Raft) sendCandidateCampaign() {
-	messages := r.generateBroadcastMessages(MESSAGE_VOTE_REQUEST)
+	messages := r.generateBroadcastMessages(MessageVoteRequest)
 	r.addOutboundMessage(messages...)
 }
 
 func (r *Raft) callCandidate(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.stepDownToFollowerIfStale(m)
-	case MESSAGE_VOTE_RESPONSE:
+	case MessageVoteResponse:
 		r.candidateReceiveVoteResponses(m)
 	default:
-		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -384,11 +396,11 @@ func (r *Raft) transitionLeader() {
 
 func (r *Raft) callLeader(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_NEW_ENTRY:
+	case MessageNewEntry:
 		r.leaderWriteNewEntries(m.RawEntries)
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.stepDownToFollowerIfStale(m)
-	case MESSAGE_APPEND_RESPONSE:
+	case MessageAppendResponse:
 		r.leaderHandleAppendMessageResponse(m)
 	default:
 		r.addResponseToOutput(m.Type, false, false, m.From)
@@ -413,7 +425,7 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 	r.addOutboundWriteEntries(newEntries...)
 	msg := RaftMessage{
 		From:             r.id,
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		Term:             r.currentTerm,
 		PreviousLogIndex: r.lastEntryIndex,
 		PreviousLogTerm:  r.lastEntryTerm,
@@ -451,7 +463,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 		batchsize := min(100, r.lastEntryIndex)
 		entries, err := r.logFile.GetEntries(1, batchsize)
 		if err != nil {
-			panic(err.Error())
+			// log here
+			r.addLogFileErrorOutput()
+			return
 		}
 
 		msg := r.baselineLeaderAppendMessage(id)
@@ -470,7 +484,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 	if !follower.isReconciling {
 		startEntryIndex, err = r.logFile.StartOfTerm(follower.lastEntryTerm)
 		if err != nil {
-			panic(err.Error())
+			// log here
+			r.addLogFileErrorOutput()
+			return
 		}
 	}
 
@@ -481,7 +497,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 	if 1 < startEntryIndex {
 		previousEntry, err = r.logFile.GetEntry(startEntryIndex - 1)
 		if err != nil {
-			panic(err.Error())
+			// log here
+			r.addLogFileErrorOutput()
+			return
 		}
 	}
 
@@ -493,7 +511,9 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 	lastEntryIndex := startEntryIndex + batchSize - 1
 	entries, err := r.logFile.GetEntries(startEntryIndex, lastEntryIndex)
 	if err != nil {
-		panic(err.Error())
+		// log here
+		r.addLogFileErrorOutput()
+		return
 	}
 
 	msg := r.baselineLeaderAppendMessage(id)
@@ -506,7 +526,7 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 
 func (r *Raft) baselineLeaderAppendMessage(to uint64) RaftMessage {
 	msg := RaftMessage{
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		To:               to,
 		From:             r.id,
 		Term:             r.currentTerm,
@@ -546,7 +566,7 @@ func (r *Raft) leaderUpdateCommitIndex() {
 
 func (r *Raft) leaderSendHeartbeat() {
 	msg := RaftMessage{
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		Term:             r.currentTerm,
 		LeaderId:         r.id,
 		PreviousLogIndex: r.lastEntryIndex,
@@ -587,10 +607,10 @@ func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMess
 		msg.PreviousLogTerm = r.lastEntryTerm
 
 		switch messageType {
-		case MESSAGE_PREVOTE_REQUEST:
+		case MessagePrevoteRequest:
 			msg.CandidateId = r.id
 			msg.Term = r.currentTerm
-		case MESSAGE_VOTE_REQUEST:
+		case MessageVoteRequest:
 			msg.CandidateId = r.id
 			msg.Term = r.currentTerm + 1
 		}
@@ -602,37 +622,57 @@ func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMess
 }
 
 func (r *Raft) handleVoteRequest(m RaftMessage) {
-	if r.currentTerm >= m.Term || r.lastEntryIndex > m.PreviousLogIndex {
+	if r.currentTerm > m.Term {
+		r.addVoteResponseToOutput(false, m.From)
+		return
+	}
+
+	if r.votedFor != 0 && r.votedFor != m.CandidateId {
+		r.addVoteResponseToOutput(false, m.From)
+		return
+	}
+
+	if r.lastEntryTerm > m.PreviousLogTerm {
+		r.addVoteResponseToOutput(false, m.From)
+		return
+	}
+	if r.lastEntryTerm == m.PreviousLogTerm && r.lastEntryIndex > m.PreviousLogIndex {
 		r.addVoteResponseToOutput(false, m.From)
 		return
 	}
 
 	r.addOutboundMetadataUpdate(RaftMetadataUpdate{VotedFor: m.CandidateId, CurrentTerm: m.Term})
 	r.addVoteResponseToOutput(true, m.From)
-	r.transitionFollower()
 }
 
 func (r *Raft) applyCommittedEntries() {
 	if r.lastAppliedIndex == r.commitIndex {
 		return
 	}
+	r.logger.Info("Last applied index at %d and commit index at %d", r.lastAppliedIndex, r.commitIndex)
 
 	startIndex := r.lastAppliedIndex + 1
 
 	endIndex := min(r.commitIndex, r.lastEntryIndex)
 
 	entries, err := r.logFile.GetEntries(startIndex, endIndex)
-
 	if err != nil {
-		msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
-		panic(msg)
+		//msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
+		r.logger.Error("Error encountered while retrieving commited entries: %s", err.Error())
+		r.addLogFileErrorOutput()
+		return
 	}
 
 	err = validateEntriesAreSequential(r.lastAppliedIndex, entries[0].Term, entries)
 	if err != nil {
-		msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
-		panic(msg)
+		//msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
+		// log here
+		r.logger.Error("Entries from log file validation: %s", err.Error())
+		r.addLogFileErrorOutput()
+		return
 	}
+
+	r.logger.Info("Applying commited entries %d to %d", r.lastAppliedIndex, r.commitIndex)
 
 	r.addOutboundApplyEntries(entries)
 }
@@ -659,15 +699,15 @@ func (r *Raft) validateEntriesBeforeAppend(index, term uint64, entries []RaftEnt
 }
 
 func (r *Raft) addAppendEntryResponse(success bool, to uint64) {
-	r.addResponseToOutput(MESSAGE_APPEND_RESPONSE, success, false, to)
+	r.addResponseToOutput(MessageAppendResponse, success, false, to)
 }
 
 func (r *Raft) addPrevoteResponseToOutput(success bool, to uint64) {
-	r.addResponseToOutput(MESSAGE_PREVOTE_RESPONSE, success, success, to)
+	r.addResponseToOutput(MessagePrevoteResponse, success, success, to)
 }
 
 func (r *Raft) addVoteResponseToOutput(success bool, to uint64) {
-	r.addResponseToOutput(MESSAGE_VOTE_RESPONSE, success, success, to)
+	r.addResponseToOutput(MessageVoteResponse, success, success, to)
 }
 
 func (r *Raft) addResponseToOutput(msgType RaftMessageType, success bool, voteGranted bool, to uint64) {
@@ -765,4 +805,20 @@ func (r *Raft) initFollowTracking() {
 	}
 
 	r.followTracker = tracker
+}
+
+func (r *Raft) addMetadataFileErrorOutput() {
+	if nil == r.outbound {
+		r.resetOutbound()
+	}
+
+	r.outbound.MetadataFileError = true
+}
+
+func (r *Raft) addLogFileErrorOutput() {
+	if nil == r.outbound {
+		r.resetOutbound()
+	}
+
+	r.outbound.LogFileError = true
 }

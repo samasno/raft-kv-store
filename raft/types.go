@@ -1,6 +1,9 @@
 package raft
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 type raftState uint8
 
@@ -30,30 +33,31 @@ type RaftMessageType uint8
 
 // TODO better enumeration on serialized types
 const (
-	MESSAGE_APPEND RaftMessageType = iota
-	MESSAGE_APPEND_RESPONSE
-	MESSAGE_PREVOTE_REQUEST
-	MESSAGE_PREVOTE_RESPONSE
-	MESSAGE_VOTE_REQUEST
-	MESSAGE_VOTE_RESPONSE
-	MESSAGE_NEW_ENTRY
-	MESSAGE_INVALID_REQUEST
+	MessageAppend RaftMessageType = iota
+	MessageAppendResponse
+	MessagePrevoteRequest
+	MessagePrevoteResponse
+	MessageVoteRequest
+	MessageVoteResponse
+	MessageNewEntry
+	MessageInvalidRequest
 )
 
 func (rm RaftMessageType) String() string {
 	switch rm {
-	case MESSAGE_APPEND:
-		return "MESSAGE_APPEND"
-	case MESSAGE_APPEND_RESPONSE:
-		return "MESSAGE_APPEND_RESPONSE"
-	case MESSAGE_PREVOTE_REQUEST:
-		return "MESSAGE_PREVOTE_REQUEST"
-	case MESSAGE_PREVOTE_RESPONSE:
-		return "MESSAGE_PREVOTE_RESPONSE"
-	case MESSAGE_VOTE_REQUEST:
-		return "MESSAGE_VOTE_REQUEST"
-	case MESSAGE_VOTE_RESPONSE:
-		return "MESSAGE_VOTE_RESPONSE"
+	case MessageAppend:
+		return "MessageAppend"
+	case MessageAppendResponse:
+		return "MessageAppendResponse"
+	case MessagePrevoteRequest:
+		return "MessagePrevoteRequest"
+	case MessagePrevoteResponse:
+		return "MessagePrevoteResponse"
+	case MessageVoteRequest:
+		return "MessageVoteRequest"
+	case MessageVoteResponse:
+		return "MessageVoteResponse"
+
 	}
 
 	return "INVALID MESSAGE"
@@ -105,10 +109,12 @@ type ApplicationEntry struct {
 }
 
 type RaftOutput struct {
-	UpdateMetadata  []RaftMetadataUpdate
-	SendMessages    []RaftMessage
-	WriteLogEntries []RaftEntry
-	ApplyEntries    []RaftEntry
+	UpdateMetadata    []RaftMetadataUpdate
+	SendMessages      []RaftMessage
+	WriteLogEntries   []RaftEntry
+	ApplyEntries      []RaftEntry
+	LogFileError      bool
+	MetadataFileError bool
 }
 
 func (ro *RaftOutput) generateUpdate() *raftUpdate {
@@ -118,10 +124,9 @@ func (ro *RaftOutput) generateUpdate() *raftUpdate {
 	update := &raftUpdate{}
 
 	for _, m := range ro.UpdateMetadata {
-		update.votedFor = max(m.VotedFor, update.votedFor)
-	}
-
-	for _, m := range ro.UpdateMetadata {
+		if 0 != m.VotedFor {
+			update.votedFor = m.VotedFor
+		}
 		update.currentTerm = max(m.CurrentTerm, update.currentTerm)
 	}
 
@@ -159,12 +164,24 @@ type followerStatus struct {
 }
 
 type RaftConfig struct {
-	id uint64
+	Id       uint64
+	Peers    []uint64
+	LogLevel uint8
 }
 
 func (rc RaftConfig) Validate() error {
-	if rc.id == 0 {
+	if rc.Id == 0 {
 		return errors.New("Raft id cannot be 0")
+	}
+
+	for _, id := range rc.Peers {
+		if rc.Id == id {
+			return errors.New("Cannot have own id in peers")
+		}
+	}
+
+	if rc.LogLevel > uint8(Debug) {
+		return fmt.Errorf("Max log level is %d", Debug)
 	}
 
 	return nil
@@ -179,8 +196,8 @@ type RaftLogFile interface {
 }
 
 type RaftMetadataFile interface {
-	CurrentTerm() uint64
-	VotedFor() uint64
+	CurrentTerm() (uint64, error)
+	VotedFor() (uint64, error)
 }
 
 type raftCallFn func(m RaftMessage)
