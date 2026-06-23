@@ -168,7 +168,7 @@ func setupRaftTest() (*Raft, Raft, *inMemoryMetadataFile, *inMemoryLogFile) {
 
 func baselineAppendEntryTestMessage(r *Raft) RaftMessage {
 	m := RaftMessage{
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		To:               r.id,
 		From:             r.leader,
 		Term:             r.currentTerm,

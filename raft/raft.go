@@ -174,14 +174,14 @@ func (r *Raft) tickFollower() {
 
 func (r *Raft) callFollower(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.followerAppendEntry(m)
-	case MESSAGE_PREVOTE_REQUEST:
+	case MessagePrevoteRequest:
 		r.followerReplyPrevoteRequest(m)
-	case MESSAGE_VOTE_REQUEST:
+	case MessageVoteRequest:
 		r.handleVoteRequest(m)
 	default:
-		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -252,14 +252,14 @@ func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
 
 func (r *Raft) callPrecandidate(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_PREVOTE_RESPONSE:
+	case MessagePrevoteResponse:
 		r.precandidateReceivePrevoteResponse(m)
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.stepDownToFollowerIfStale(m)
-	case MESSAGE_VOTE_REQUEST:
+	case MessageVoteRequest:
 		r.handleVoteRequest(m)
 	default:
-		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -308,7 +308,7 @@ func (r *Raft) transitionPrecandidate() {
 }
 
 func (r *Raft) sendPrecandidateCampaign() {
-	messages := r.generateBroadcastMessages(MESSAGE_PREVOTE_REQUEST)
+	messages := r.generateBroadcastMessages(MessagePrevoteRequest)
 	r.addOutboundMessage(messages...)
 }
 
@@ -328,18 +328,18 @@ func (r *Raft) transitionCandidate() {
 }
 
 func (r *Raft) sendCandidateCampaign() {
-	messages := r.generateBroadcastMessages(MESSAGE_VOTE_REQUEST)
+	messages := r.generateBroadcastMessages(MessageVoteRequest)
 	r.addOutboundMessage(messages...)
 }
 
 func (r *Raft) callCandidate(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.stepDownToFollowerIfStale(m)
-	case MESSAGE_VOTE_RESPONSE:
+	case MessageVoteResponse:
 		r.candidateReceiveVoteResponses(m)
 	default:
-		r.addResponseToOutput(MESSAGE_INVALID_REQUEST, false, false, m.From)
+		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -385,11 +385,11 @@ func (r *Raft) transitionLeader() {
 
 func (r *Raft) callLeader(m RaftMessage) {
 	switch m.Type {
-	case MESSAGE_NEW_ENTRY:
+	case MessageNewEntry:
 		r.leaderWriteNewEntries(m.RawEntries)
-	case MESSAGE_APPEND:
+	case MessageAppend:
 		r.stepDownToFollowerIfStale(m)
-	case MESSAGE_APPEND_RESPONSE:
+	case MessageAppendResponse:
 		r.leaderHandleAppendMessageResponse(m)
 	default:
 		r.addResponseToOutput(m.Type, false, false, m.From)
@@ -414,7 +414,7 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 	r.addOutboundWriteEntries(newEntries...)
 	msg := RaftMessage{
 		From:             r.id,
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		Term:             r.currentTerm,
 		PreviousLogIndex: r.lastEntryIndex,
 		PreviousLogTerm:  r.lastEntryTerm,
@@ -507,7 +507,7 @@ func (r *Raft) leaderReconcileFollowerEntries(id uint64) {
 
 func (r *Raft) baselineLeaderAppendMessage(to uint64) RaftMessage {
 	msg := RaftMessage{
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		To:               to,
 		From:             r.id,
 		Term:             r.currentTerm,
@@ -547,7 +547,7 @@ func (r *Raft) leaderUpdateCommitIndex() {
 
 func (r *Raft) leaderSendHeartbeat() {
 	msg := RaftMessage{
-		Type:             MESSAGE_APPEND,
+		Type:             MessageAppend,
 		Term:             r.currentTerm,
 		LeaderId:         r.id,
 		PreviousLogIndex: r.lastEntryIndex,
@@ -588,10 +588,10 @@ func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMess
 		msg.PreviousLogTerm = r.lastEntryTerm
 
 		switch messageType {
-		case MESSAGE_PREVOTE_REQUEST:
+		case MessagePrevoteRequest:
 			msg.CandidateId = r.id
 			msg.Term = r.currentTerm
-		case MESSAGE_VOTE_REQUEST:
+		case MessageVoteRequest:
 			msg.CandidateId = r.id
 			msg.Term = r.currentTerm + 1
 		}
@@ -673,15 +673,15 @@ func (r *Raft) validateEntriesBeforeAppend(index, term uint64, entries []RaftEnt
 }
 
 func (r *Raft) addAppendEntryResponse(success bool, to uint64) {
-	r.addResponseToOutput(MESSAGE_APPEND_RESPONSE, success, false, to)
+	r.addResponseToOutput(MessageAppendResponse, success, false, to)
 }
 
 func (r *Raft) addPrevoteResponseToOutput(success bool, to uint64) {
-	r.addResponseToOutput(MESSAGE_PREVOTE_RESPONSE, success, success, to)
+	r.addResponseToOutput(MessagePrevoteResponse, success, success, to)
 }
 
 func (r *Raft) addVoteResponseToOutput(success bool, to uint64) {
-	r.addResponseToOutput(MESSAGE_VOTE_RESPONSE, success, success, to)
+	r.addResponseToOutput(MessageVoteResponse, success, success, to)
 }
 
 func (r *Raft) addResponseToOutput(msgType RaftMessageType, success bool, voteGranted bool, to uint64) {

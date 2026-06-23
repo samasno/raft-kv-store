@@ -30,30 +30,30 @@ type RaftMessageType uint8
 
 // TODO better enumeration on serialized types
 const (
-	MESSAGE_APPEND RaftMessageType = iota
-	MESSAGE_APPEND_RESPONSE
-	MESSAGE_PREVOTE_REQUEST
-	MESSAGE_PREVOTE_RESPONSE
-	MESSAGE_VOTE_REQUEST
-	MESSAGE_VOTE_RESPONSE
-	MESSAGE_NEW_ENTRY
-	MESSAGE_INVALID_REQUEST
+	MessageAppend RaftMessageType = iota
+	MessageAppendResponse
+	MessagePrevoteRequest
+	MessagePrevoteResponse
+	MessageVoteRequest
+	MessageVoteResponse
+	MessageNewEntry
+	MessageInvalidRequest
 )
 
 func (rm RaftMessageType) String() string {
 	switch rm {
-	case MESSAGE_APPEND:
-		return "MESSAGE_APPEND"
-	case MESSAGE_APPEND_RESPONSE:
-		return "MESSAGE_APPEND_RESPONSE"
-	case MESSAGE_PREVOTE_REQUEST:
-		return "MESSAGE_PREVOTE_REQUEST"
-	case MESSAGE_PREVOTE_RESPONSE:
-		return "MESSAGE_PREVOTE_RESPONSE"
-	case MESSAGE_VOTE_REQUEST:
-		return "MESSAGE_VOTE_REQUEST"
-	case MESSAGE_VOTE_RESPONSE:
-		return "MESSAGE_VOTE_RESPONSE"
+	case MessageAppend:
+		return "MessageAppend"
+	case MessageAppendResponse:
+		return "MessageAppendResponse"
+	case MessagePrevoteRequest:
+		return "MessagePrevoteRequest"
+	case MessagePrevoteResponse:
+		return "MessagePrevoteResponse"
+	case MessageVoteRequest:
+		return "MessageVoteRequest"
+	case MessageVoteResponse:
+		return "MessageVoteResponse"
 	}
 
 	return "INVALID MESSAGE"
