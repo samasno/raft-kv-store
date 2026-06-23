@@ -169,12 +169,13 @@ func (r *Raft) transitionFollower() {
 
 func (r *Raft) tickFollower() {
 	if r.currentState != raft_follower {
-		// log here exact state transition
+		r.logger.Error("Called tickFollower form invalid state %s", r.currentState)
 		panic("Raft: tickFollower called from invalid state")
 	}
 	r.time++
 	r.electionElapsed++
 	if r.electionElapsed > r.electionTimeout {
+		r.logger.Info("Transitioning into candidate state")
 		r.transitionPrecandidate()
 		return
 	}
@@ -195,11 +196,13 @@ func (r *Raft) callFollower(m RaftMessage) {
 
 func (r *Raft) followerAppendEntry(m RaftMessage) {
 	if m.Term < r.currentTerm {
+		r.logger.Info("Append rejected with message term %d and current term %d", m.Term, r.currentTerm)
 		r.addAppendEntryResponse(false, m.From)
 		return
 	}
 
 	if m.LeaderId == 0 {
+		r.logger.Info("Append rejected due to no leader id ")
 		r.addAppendEntryResponse(false, m.From)
 		return
 	}
@@ -646,6 +649,7 @@ func (r *Raft) applyCommittedEntries() {
 	if r.lastAppliedIndex == r.commitIndex {
 		return
 	}
+	r.logger.Info("Last applied index at %d and commit index at %d", r.lastAppliedIndex, r.commitIndex)
 
 	startIndex := r.lastAppliedIndex + 1
 
@@ -654,7 +658,7 @@ func (r *Raft) applyCommittedEntries() {
 	entries, err := r.logFile.GetEntries(startIndex, endIndex)
 	if err != nil {
 		//msg := fmt.Sprintf("Attempted to apply committed entries: %s", err.Error())
-		// log here
+		r.logger.Error("Error encountered while retrieving commited entries: %s", err.Error())
 		r.addLogFileErrorOutput()
 		return
 	}
@@ -663,9 +667,12 @@ func (r *Raft) applyCommittedEntries() {
 	if err != nil {
 		//msg := fmt.Sprintf("Entries returned from log file: %s", err.Error())
 		// log here
+		r.logger.Error("Entries from log file validation: %s", err.Error())
 		r.addLogFileErrorOutput()
 		return
 	}
+
+	r.logger.Info("Applying commited entries %d to %d", r.lastAppliedIndex, r.commitIndex)
 
 	r.addOutboundApplyEntries(entries)
 }

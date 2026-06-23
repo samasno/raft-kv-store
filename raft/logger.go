@@ -1,6 +1,10 @@
 package raft
 
-import "log"
+import (
+	"fmt"
+	"log"
+	"strings"
+)
 
 type Loglevel uint8
 
@@ -38,24 +42,26 @@ func NewLogger(level Loglevel) *Logger {
 	}
 }
 
-func (l *Logger) Log(level Loglevel, msg string) {
-	if l.level >= Error {
-		l.w.Printf("%s: %s\n", level.String(), msg)
+func (l *Logger) Log(level Loglevel, msg string, args ...any) {
+	msg = strings.TrimRight(msg, "\n")
+	out := fmt.Sprintf("%s\n", args...)
+	if l.level >= level {
+		l.w.Printf("%s: %s", level.String(), out)
 	}
 }
 
-func (l *Logger) Error(msg string) {
-	l.Log(Error, msg)
+func (l *Logger) Error(msg string, args ...any) {
+	l.Log(Error, msg, args...)
 }
 
-func (l *Logger) Warning(msg string) {
-	l.Log(Warning, msg)
+func (l *Logger) Warning(msg string, args ...any) {
+	l.Log(Warning, msg, args...)
 }
 
-func (l *Logger) Info(msg string) {
-	l.Log(Info, msg)
+func (l *Logger) Info(msg string, args ...any) {
+	l.Log(Info, msg, args...)
 }
 
-func (l *Logger) Debug(msg string) {
-	l.Log(Debug, msg)
+func (l *Logger) Debug(msg string, args ...any) {
+	l.Log(Debug, msg, args...)
 }
