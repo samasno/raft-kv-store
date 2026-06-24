@@ -14,11 +14,6 @@ var votedForOffset = 4
 var currentTermOffset = 68
 var metadataFilename = "metadata.bin"
 
-type RaftMetadataFile interface {
-	CurrentTerm() (uint64, error)
-	VotedFor() (uint64, error)
-}
-
 type MetadataFile struct {
 	dir         string
 	filep       *os.File
