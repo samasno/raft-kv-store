@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path"
+
+	"github.com/samasno/raft-kv/raft"
 )
 
 var magic = "raft"
@@ -13,6 +15,8 @@ var metadataFileLength = 132
 var votedForOffset = 4
 var currentTermOffset = 68
 var metadataFilename = "metadata.bin"
+
+var _ raft.RaftMetadataFile = (*MetadataFile)(nil)
 
 type MetadataFile struct {
 	dir         string
