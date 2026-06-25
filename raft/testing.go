@@ -196,7 +196,7 @@ func generateNEntries(count, prevIndex, startTerm uint64) []RaftEntry {
 	output := []RaftEntry{}
 
 	for i := range count {
-		payload := fmt.Sprintf("payload: %d", i)
+		payload := fmt.Sprintf("payload: %d", i+1)
 		inc := i + 1
 		entry := RaftEntry{
 			Index:   prevIndex + inc,
