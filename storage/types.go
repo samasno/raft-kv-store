@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+
+	"github.com/samasno/raft-kv/raft"
 )
 
 // index structure: index u64/term u64/offset u64/length 32
@@ -13,6 +15,16 @@ type LogEntry struct {
 	Term          uint64
 	PayloadLength uint32
 	Payload       []byte
+}
+
+func (le LogEntry) RaftEntry() raft.RaftEntry {
+	re := raft.RaftEntry{
+		Index:   le.Index,
+		Term:    le.Term,
+		Payload: le.Payload,
+	}
+
+	return re
 }
 
 func (le LogEntry) Marshall() []byte {
