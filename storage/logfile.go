@@ -312,6 +312,43 @@ func convertRaftEntryToLogs(last LogIndex, e raft.RaftEntry) (LogIndex, LogEntry
 	return li, le
 }
 
+func seekIndexPosition(index uint64) (int64, error) {
+	if index <= 0 {
+		return 0, fmt.Errorf("%d invalid. Must be >= 1", index)
+	}
+
+	i := int64(index)
+	pos := (i - 1) * int64(indexFixedSize)
+	pos += int64(len(magic))
+	return pos, nil
+}
+
+func (l *LogFile) fetchIndex(index uint64) (LogIndex, error) {
+	logIndex := LogIndex{}
+	start, err := seekIndexPosition(index)
+	if err != nil {
+		return logIndex, err
+	}
+
+	buf := make([]byte, indexFixedSize)
+	_, err = l.indexfilep.ReadAt(buf, start)
+
+	logIndex, err = logIndex.Unmarshall(bytes.NewBuffer(buf))
+	if err != nil {
+		return logIndex, err
+	}
+
+	return logIndex, nil
+}
+
+func seekEntryPosition(index uint64) (int64, int64, error) {
+	// logIndex, err := seekIndexPosition(index)
+	// if err != nil {
+	// 	return 0, 0, err
+	// }
+	return 0, 0, nil
+}
+
 func writeMagicNumber(w io.Writer) error {
 	buf := []byte(magic)
 	if _, err := w.Write(buf); err != nil {

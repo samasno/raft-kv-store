@@ -84,6 +84,54 @@ func TestAppendEntries(t *testing.T) {
 	assertEqual(t, "Got last term", lastTerm, 1)
 }
 
+func TestFetchIndex(t *testing.T) {
+	testEntries := raft.GenerateEntries(300, 0, 1)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntries)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	testIndex := uint64(33)
+	index, err := lf.fetchIndex(testIndex)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	assertEqual(t, "Fetched correct inded", index.Index, testIndex)
+}
+
+func TestGetEntry(t *testing.T) {
+	// testEntries := raft.GenerateEntries(300, 0, 1)
+
+	// dir := t.TempDir()
+
+	// lf, err := OpenLogFile(dir)
+	// if err != nil {
+	// 	t.Fatal(err.Error())
+	// }
+
+	// err = lf.AppendEntries(testEntries)
+	// if err != nil {
+	// 	t.Fatalf("Failed to append: %s", err.Error())
+	// }
+
+	// assertEqual(t, "Updated tailIndex index", lf.tailIndex.Index, 300)
+	// assertEqual(t, "Updated tailindex term", lf.tailIndex.Term, 1)
+
+	// testIndex := uint64(123)
+	// entry, _ := lf.GetEntry(testIndex)
+
+	// assertEqual(t, "Pulled correct index", entry.Index, testIndex)
+}
+
 func TestIndexSerializes(t *testing.T) {
 	index := LogIndex{
 		Index:         100,
