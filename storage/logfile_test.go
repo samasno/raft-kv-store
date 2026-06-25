@@ -78,8 +78,10 @@ func TestAppendEntries(t *testing.T) {
 	lf.Close()
 
 	lf, err = OpenLogFile(dir)
-	assertEqual(t, "Got last index", lf.tailIndex.Index, 300)
-	assertEqual(t, "Got last term", lf.tailIndex.Term, 1)
+	lastLogIndex, _ := lf.LastLogIndex()
+	lastTerm, _ := lf.LastLogTerm()
+	assertEqual(t, "Got last index", lastLogIndex, 300)
+	assertEqual(t, "Got last term", lastTerm, 1)
 }
 
 func TestIndexSerializes(t *testing.T) {
