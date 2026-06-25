@@ -24,22 +24,22 @@ func (le LogEntry) Marshall() []byte {
 	return output.Bytes()
 }
 
-func (le LogEntry) Unmarshall(r io.Reader) error {
+func (l LogEntry) Unmarshall(r io.Reader) (le LogEntry, err error) {
 	if err := binary.Read(r, binary.LittleEndian, &le.Index); err != nil {
-		return err
+		return le, err
 	}
 	if err := binary.Read(r, binary.LittleEndian, &le.Term); err != nil {
-		return err
+		return le, err
 	}
 	if err := binary.Read(r, binary.LittleEndian, &le.PayloadLength); err != nil {
-		return err
+		return le, err
 	}
 	le.Payload = make([]byte, le.PayloadLength)
 	if _, err := r.Read(le.Payload); err != nil {
-		return err
+		return le, err
 	}
 
-	return nil
+	return le, nil
 }
 
 type LogIndex struct {
@@ -58,19 +58,19 @@ func (li LogIndex) Marshall() []byte {
 	return output.Bytes()
 }
 
-func (li LogIndex) Unmarshall(r io.Reader) error {
+func (l LogIndex) Unmarshall(r io.Reader) (li LogIndex, err error) {
 	if err := binary.Read(r, binary.LittleEndian, &li.Index); err != nil {
-		return err
+		return li, err
 	}
 	if err := binary.Read(r, binary.LittleEndian, &li.Term); err != nil {
-		return err
+		return li, err
 	}
 	if err := binary.Read(r, binary.LittleEndian, &li.Offset); err != nil {
-		return err
+		return li, err
 	}
 	if err := binary.Read(r, binary.LittleEndian, &li.PayloadLength); err != nil {
-		return err
+		return li, err
 	}
 
-	return nil
+	return li, nil
 }

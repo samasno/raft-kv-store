@@ -12,8 +12,8 @@ import (
 )
 
 var _ raft.RaftLogFile = (*LogFile)(nil)
-var indexFixedSize = 64 + 64 + 64 + 32
-var logEntryHeaderSize = 64 + 64 + 32
+var indexFixedSize = 8 + 8 + 8 + 4
+var logEntryHeaderSize = 8 + 8 + 4
 var logFilename = "log.bin"
 var indexFilename = "index.bin"
 
@@ -137,7 +137,7 @@ func useExistingLogfile(logInfo, indexInfo os.FileInfo, dirname string) (*LogFil
 	}
 
 	// TODO validate length against index
-	if err = logfile.truncateToIndex(); err != nil {
+	if err = logfile.truncateEntriesToLatestIndex(); err != nil {
 		defer logfile.Close()
 		return nil, err
 	}
@@ -145,15 +145,43 @@ func useExistingLogfile(logInfo, indexInfo os.FileInfo, dirname string) (*LogFil
 	return logfile, nil
 }
 
-func (l *LogFile) AppendEntries(entries []raft.RaftEntry) error {
-	// index file made of offset uint64/length uint32 pairs back to back
-	// no headers for now, maybe magic number
-	// log file term/index/payload. length is in index pair, covers all combined
-	// process in batches of 100
-	// serialize into index buf and log buf in parallel,
-	// once batched or done, write all to file and fsync
-	// write to index first
-	// write to
+func (l *LogFile) AppendEntries(raftEntries []raft.RaftEntry) error {
+	indexes := []LogIndex{}
+	entries := []LogEntry{}
+	for _, e := range raftEntries {
+		index, entry := convertRaftEntryToLogs(l.tailIndex, e)
+		indexes = append(indexes, index)
+		entries = append(entries, entry)
+		l.tailIndex = index
+	}
+	indexOutput := bytes.NewBuffer([]byte{})
+	entriesOutput := bytes.NewBuffer([]byte{})
+
+	for i := 0; i < len(indexes); i++ {
+		indexOutput.Write(indexes[i].Marshall())
+		entriesOutput.Write(entries[i].Marshall())
+	}
+
+	_, err := l.entriesfilep.Write(entriesOutput.Bytes())
+	if err != nil {
+		return err
+	}
+
+	err = l.entriesfilep.Sync()
+	if err != nil {
+		return err
+	}
+
+	_, err = l.indexfilep.Write(indexOutput.Bytes())
+	if err != nil {
+		return err
+	}
+
+	err = l.indexfilep.Sync()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -174,7 +202,7 @@ func (l *LogFile) GetEntries(first uint64, last uint64) ([]raft.RaftEntry, error
 	return nil, nil
 }
 
-func (l *LogFile) truncateToIndex() error {
+func (l *LogFile) truncateEntriesToLatestIndex() error {
 	// if index is 0/0 just return
 	// check datafile length against last index derived length
 	// if shorter, return error
@@ -262,7 +290,7 @@ func parseLogIndex(data io.Reader) (li LogIndex, err error) {
 }
 
 func convertRaftEntryToLogs(last LogIndex, e raft.RaftEntry) (LogIndex, LogEntry) {
-	offset := last.Offset + uint64(indexFixedSize) + uint64(last.PayloadLength)
+	offset := last.Offset + uint64(logEntryHeaderSize) + uint64(last.PayloadLength)
 	if 0 == last.Offset {
 		offset += 4 // account for magic
 	}
@@ -291,4 +319,33 @@ func writeMagicNumber(w io.Writer) error {
 	}
 
 	return nil
+}
+
+func (l *LogFile) debugWalkIndex() {
+	l.indexfilep.Seek(4, io.SeekStart)
+	println("***Index Walk***")
+	for {
+		li := LogIndex{}
+		li, err := li.Unmarshall(l.indexfilep)
+		if err != nil {
+			break
+		}
+		fmt.Printf("i:%d t:%d o:%d l:%d\n", li.Index, li.Term, li.Offset, li.PayloadLength)
+	}
+
+	println("***End Index Walk***")
+}
+
+func (l *LogFile) debugWalkEntries() {
+	l.entriesfilep.Seek(4, io.SeekStart)
+	println("***Entries Walk***")
+	for {
+		le := LogEntry{}
+		le, err := le.Unmarshall(l.entriesfilep)
+		if err != nil {
+			break
+		}
+		fmt.Printf("i:%d t:%d l:%d p:\"%s\"\n", le.Index, le.Term, le.PayloadLength, string(le.Payload))
+	}
+	println("***End Entries Walk***")
 }
