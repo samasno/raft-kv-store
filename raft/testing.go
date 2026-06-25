@@ -209,6 +209,10 @@ func generateNEntries(count, prevIndex, startTerm uint64) []RaftEntry {
 	return output
 }
 
+func GenerateEntries(count, prevIndex, startTerm uint64) []RaftEntry {
+	return generateNEntries(count, prevIndex, startTerm)
+}
+
 func debugPrintEntryIndexes(entries []RaftEntry) {
 	println("***Start Entry Indexes***")
 	println("Total", len(entries))
