@@ -211,7 +211,7 @@ func (l *LogFile) truncateEntriesToLatestIndex() error {
 }
 
 func (l *LogFile) GetEntry(index uint64) (raft.RaftEntry, error) {
-	return raft.RaftEntry{}, nil
+	return l.getEntry(index)
 }
 
 func (l *LogFile) updateLatestIndex() (err error) {
@@ -290,9 +290,11 @@ func parseLogIndex(data io.Reader) (li LogIndex, err error) {
 }
 
 func convertRaftEntryToLogs(last LogIndex, e raft.RaftEntry) (LogIndex, LogEntry) {
+
 	offset := last.Offset + uint64(logEntryHeaderSize) + uint64(last.PayloadLength)
+
 	if 0 == last.Offset {
-		offset += 4 // account for magic
+		offset = 4 // start first entry at 4
 	}
 
 	li := LogIndex{
@@ -341,12 +343,26 @@ func (l *LogFile) fetchIndex(index uint64) (LogIndex, error) {
 	return logIndex, nil
 }
 
-func seekEntryPosition(index uint64) (int64, int64, error) {
-	// logIndex, err := seekIndexPosition(index)
-	// if err != nil {
-	// 	return 0, 0, err
-	// }
-	return 0, 0, nil
+func (l *LogFile) getEntry(index uint64) (raft.RaftEntry, error) {
+	le := LogEntry{}
+	logIndex, err := l.fetchIndex(index)
+	if err != nil {
+		return le.RaftEntry(), err
+	}
+
+	entryLen := logEntryHeaderSize + int(logIndex.PayloadLength)
+	buf := make([]byte, entryLen)
+	_, err = l.entriesfilep.ReadAt(buf, int64(logIndex.Offset))
+	if err != nil {
+		return le.RaftEntry(), err
+	}
+
+	le, err = le.Unmarshall(bytes.NewBuffer(buf))
+	if err != nil {
+		return le.RaftEntry(), err
+	}
+
+	return le.RaftEntry(), nil
 }
 
 func writeMagicNumber(w io.Writer) error {
