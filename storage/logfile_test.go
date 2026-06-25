@@ -1,6 +1,11 @@
 package storage
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+
+	"github.com/samasno/raft-kv/raft"
+)
 
 func TestOpenLogfile(t *testing.T) {
 	dir := t.TempDir()
@@ -51,4 +56,46 @@ func TestOpenLogfile(t *testing.T) {
 	}
 
 	lf.Close()
+}
+
+func TestAppendEntries(t *testing.T) {
+	testEntries := raft.GenerateEntries(300, 0, 1)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntries)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	assertEqual(t, "Updated tailIndex index", lf.tailIndex.Index, 300)
+	assertEqual(t, "Updated tailindex term", lf.tailIndex.Term, 1)
+	lf.Close()
+
+	lf, err = OpenLogFile(dir)
+	assertEqual(t, "Got last index", lf.tailIndex.Index, 300)
+	assertEqual(t, "Got last term", lf.tailIndex.Term, 1)
+}
+
+func TestIndexSerializes(t *testing.T) {
+	index := LogIndex{
+		Index:         100,
+		Term:          3,
+		Offset:        3991292,
+		PayloadLength: 100,
+	}
+
+	input := bytes.NewBuffer(index.Marshall())
+
+	buf := LogIndex{}
+	recoveredIndex, _ := buf.Unmarshall(input)
+	assertEqual(t, "Recovered same Index", recoveredIndex.Index, index.Index)
+	assertEqual(t, "Recovered same term", recoveredIndex.Term, index.Term)
+
+	assertEqual(t, "Fixed length as expected", len(index.Marshall()), indexFixedSize)
 }
