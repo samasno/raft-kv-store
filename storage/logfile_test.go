@@ -132,6 +132,34 @@ func TestGetEntry(t *testing.T) {
 	assertEqual(t, "Pulled correct index", entry.Index, testIndex)
 }
 
+func TestGetEntries(t *testing.T) {
+	testEntries := raft.GenerateEntries(300, 0, 1)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntries)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	startIndex := uint64(77)
+	lastIndex := uint64(223)
+
+	entries, err := lf.GetEntries(startIndex, lastIndex)
+
+	assertEqual(t, "Got all entries", len(entries), int(lastIndex-startIndex+1))
+	counter := startIndex
+	for _, e := range entries {
+		assertEqual(t, "Got entries in order", e.Index, counter)
+		counter++
+	}
+}
+
 func TestIndexSerializes(t *testing.T) {
 	index := LogIndex{
 		Index:         100,

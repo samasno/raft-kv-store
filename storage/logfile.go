@@ -194,12 +194,44 @@ func (l *LogFile) LastLogTerm() (uint64, error) {
 }
 
 func (l *LogFile) GetEntries(first uint64, last uint64) ([]raft.RaftEntry, error) {
-	// read indexes index/term/offset/length pairs,
-	// return error if either index out of bounds
-	// calculate bulk read
-	// start offset through last offset + last length
-	// read and parse into raft entries
-	return nil, nil
+	firstIndex, err := l.fetchIndex(first)
+	if err != nil {
+		return nil, err
+	}
+
+	lastIndex, err := l.fetchIndex(last)
+	if err != nil {
+		return nil, err
+	}
+
+	endOffset := lastIndex.Offset + uint64(logEntryHeaderSize) + uint64(lastIndex.PayloadLength)
+
+	totalLength := endOffset - firstIndex.Offset
+	buf := make([]byte, totalLength)
+
+	_, err = l.entriesfilep.ReadAt(buf, int64(firstIndex.Offset))
+	if err != nil {
+		return nil, err
+	}
+
+	entries := []raft.RaftEntry{}
+	rd := bytes.NewBuffer(buf)
+
+	for {
+		logEntry := LogEntry{}
+		logEntry, err = logEntry.Unmarshall(rd)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+
+		if err == io.EOF {
+			break
+		}
+
+		entries = append(entries, logEntry.RaftEntry())
+	}
+
+	return entries, nil
 }
 
 func (l *LogFile) truncateEntriesToLatestIndex() error {
