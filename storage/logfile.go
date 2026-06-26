@@ -250,10 +250,15 @@ func (l *LogFile) getEntries(first uint64, last uint64) ([]raft.RaftEntry, error
 }
 
 func (l *LogFile) truncateEntriesToLatestIndex() error {
-	// if index is 0/0 just return
-	// check datafile length against last index derived length
-	// if shorter, return error
-	// if longer, truncate datafile to derived length
+	if 1 > l.tailIndex.Index {
+		return nil
+	}
+
+	end := l.tailIndex.Offset + uint64(logEntryHeaderSize) + uint64(l.tailIndex.PayloadLength)
+	err := l.entriesfilep.Truncate(int64(end))
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -279,8 +284,29 @@ func (l *LogFile) getEntry(index uint64) (raft.RaftEntry, error) {
 	return le.RaftEntry(), nil
 }
 
-func (l *LogFile) startOfTerm(termNumber uint64) (uint64, error) {
-	return 0, nil
+func (l *LogFile) startOfTerm(term uint64) (uint64, error) {
+	lo := uint64(1)
+	hi := l.tailIndex.Index
+
+	for {
+		mid := lo + (hi-lo)/2
+		midIndex, err := l.fetchIndex(mid)
+		if err != nil {
+			return 0, err
+		}
+
+		if midIndex.Term < term {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+
+		if lo == hi {
+			break
+		}
+	}
+
+	return lo, nil
 }
 
 func (l *LogFile) updateLatestIndex() (err error) {

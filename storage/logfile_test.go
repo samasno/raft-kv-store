@@ -167,6 +167,42 @@ func TestGetEntries(t *testing.T) {
 	defer lf.Close()
 }
 
+func TestGetStartOfTerm(t *testing.T) {
+	testEntriesA := raft.GenerateEntries(33, 0, 1)
+	testEntriesB := raft.GenerateEntries(27, 33, 2)
+	testEntriesC := raft.GenerateEntries(20, 60, 3)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesA)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesB)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesC)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	termOne, _ := lf.StartOfTerm(1)
+	termTwo, _ := lf.StartOfTerm(2)
+	termThr, _ := lf.StartOfTerm(3)
+
+	assertEqual(t, "Got term one start", termOne, 1)
+	assertEqual(t, "Got term two", termTwo, 34)
+	assertEqual(t, "Got term three", termThr, 61)
+}
+
 func TestIndexSerializes(t *testing.T) {
 	index := LogIndex{
 		Index:         100,
