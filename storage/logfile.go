@@ -27,6 +27,30 @@ type LogFile struct {
 // index structure: index u64/term u64/offset u64/length 32
 // entry structure: index u64/term u64/length u32/payload n
 
+func (l *LogFile) GetEntry(index uint64) (raft.RaftEntry, error) {
+	return l.getEntry(index)
+}
+
+func (l *LogFile) GetEntries(first uint64, last uint64) ([]raft.RaftEntry, error) {
+	return l.getEntries(first, last)
+}
+
+func (l *LogFile) LastLogIndex() (uint64, error) {
+	return l.tailIndex.Index, nil
+}
+
+func (l *LogFile) LastLogTerm() (uint64, error) {
+	return l.tailIndex.Term, nil
+}
+
+func (l *LogFile) StartOfTerm(termNumber uint64) (uint64, error) {
+	return l.startOfTerm(termNumber)
+}
+
+func (l *LogFile) AppendEntries(raftEntries []raft.RaftEntry) error {
+	return l.appendEntries(raftEntries)
+}
+
 func OpenLogFile(dirname string) (*LogFile, error) {
 	info, err := os.Stat(dirname)
 	if err != nil {
@@ -88,7 +112,6 @@ func newLogfile(dirname string) (*LogFile, error) {
 		return nil, err
 	}
 
-	// write magic number
 	if err := writeMagicNumber(logfile.entriesfilep); err != nil {
 		defer logfile.Close()
 		return nil, err
@@ -145,7 +168,7 @@ func useExistingLogfile(logInfo, indexInfo os.FileInfo, dirname string) (*LogFil
 	return logfile, nil
 }
 
-func (l *LogFile) AppendEntries(raftEntries []raft.RaftEntry) error {
+func (l *LogFile) appendEntries(raftEntries []raft.RaftEntry) error {
 	indexes := []LogIndex{}
 	entries := []LogEntry{}
 	for _, e := range raftEntries {
@@ -185,15 +208,7 @@ func (l *LogFile) AppendEntries(raftEntries []raft.RaftEntry) error {
 	return nil
 }
 
-func (l *LogFile) LastLogIndex() (uint64, error) {
-	return l.tailIndex.Index, nil
-}
-
-func (l *LogFile) LastLogTerm() (uint64, error) {
-	return l.tailIndex.Term, nil
-}
-
-func (l *LogFile) GetEntries(first uint64, last uint64) ([]raft.RaftEntry, error) {
+func (l *LogFile) getEntries(first uint64, last uint64) ([]raft.RaftEntry, error) {
 	firstIndex, err := l.fetchIndex(first)
 	if err != nil {
 		return nil, err
@@ -242,8 +257,30 @@ func (l *LogFile) truncateEntriesToLatestIndex() error {
 	return nil
 }
 
-func (l *LogFile) GetEntry(index uint64) (raft.RaftEntry, error) {
-	return l.getEntry(index)
+func (l *LogFile) getEntry(index uint64) (raft.RaftEntry, error) {
+	le := LogEntry{}
+	logIndex, err := l.fetchIndex(index)
+	if err != nil {
+		return le.RaftEntry(), err
+	}
+
+	entryLen := logEntryHeaderSize + int(logIndex.PayloadLength)
+	buf := make([]byte, entryLen)
+	_, err = l.entriesfilep.ReadAt(buf, int64(logIndex.Offset))
+	if err != nil {
+		return le.RaftEntry(), err
+	}
+
+	le, err = le.Unmarshall(bytes.NewBuffer(buf))
+	if err != nil {
+		return le.RaftEntry(), err
+	}
+
+	return le.RaftEntry(), nil
+}
+
+func (l *LogFile) startOfTerm(termNumber uint64) (uint64, error) {
+	return 0, nil
 }
 
 func (l *LogFile) updateLatestIndex() (err error) {
@@ -266,13 +303,6 @@ func (l *LogFile) updateLatestIndex() (err error) {
 	}
 
 	return nil
-}
-
-func (l *LogFile) StartOfTerm(termNumber uint64) (uint64, error) {
-	// find first index where a term starts, should be a no-op from new leader commit
-	// might use a walk back from last index put into in memory map
-	// or use a binary search, but this may require more reads
-	return 0, nil
 }
 
 func (l *LogFile) Filenames() (string, string) {
@@ -373,28 +403,6 @@ func (l *LogFile) fetchIndex(index uint64) (LogIndex, error) {
 	}
 
 	return logIndex, nil
-}
-
-func (l *LogFile) getEntry(index uint64) (raft.RaftEntry, error) {
-	le := LogEntry{}
-	logIndex, err := l.fetchIndex(index)
-	if err != nil {
-		return le.RaftEntry(), err
-	}
-
-	entryLen := logEntryHeaderSize + int(logIndex.PayloadLength)
-	buf := make([]byte, entryLen)
-	_, err = l.entriesfilep.ReadAt(buf, int64(logIndex.Offset))
-	if err != nil {
-		return le.RaftEntry(), err
-	}
-
-	le, err = le.Unmarshall(bytes.NewBuffer(buf))
-	if err != nil {
-		return le.RaftEntry(), err
-	}
-
-	return le.RaftEntry(), nil
 }
 
 func writeMagicNumber(w io.Writer) error {

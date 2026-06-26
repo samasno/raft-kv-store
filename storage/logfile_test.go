@@ -34,7 +34,6 @@ func TestOpenLogfile(t *testing.T) {
 
 	lf.Close()
 
-	// reopen log file
 	lf, err = OpenLogFile(dir)
 
 	ismagic, err = readMagicNumber(lf.entriesfilep)
@@ -133,7 +132,8 @@ func TestGetEntry(t *testing.T) {
 }
 
 func TestGetEntries(t *testing.T) {
-	testEntries := raft.GenerateEntries(300, 0, 1)
+	testEntriesA := raft.GenerateEntries(150, 0, 1)
+	testEntriesB := raft.GenerateEntries(150, 150, 2)
 
 	dir := t.TempDir()
 
@@ -142,7 +142,12 @@ func TestGetEntries(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	err = lf.AppendEntries(testEntries)
+	err = lf.AppendEntries(testEntriesA)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesB)
 	if err != nil {
 		t.Fatalf("Failed to append: %s", err.Error())
 	}
@@ -158,6 +163,8 @@ func TestGetEntries(t *testing.T) {
 		assertEqual(t, "Got entries in order", e.Index, counter)
 		counter++
 	}
+
+	defer lf.Close()
 }
 
 func TestIndexSerializes(t *testing.T) {
