@@ -11,9 +11,9 @@ import (
 )
 
 var magic = "raft"
-var metadataFileLength = 132
-var votedForOffset = 4
-var currentTermOffset = 68
+var metadataFileLength = 4 + 8 + 8
+var votedForOffset = len(magic)
+var currentTermOffset = len(magic) + 8
 var metadataFilename = "metadata.bin"
 
 var _ raft.RaftMetadataFile = (*MetadataFile)(nil)
@@ -134,10 +134,17 @@ func (m *MetadataFile) writeAt(offset int64, data uint64) error {
 		return fmt.Errorf("need to init file now")
 	}
 
-	m.filep.Seek(offset, io.SeekStart)
-	binary.Write(m.filep, binary.LittleEndian, data)
+	_, err := m.filep.Seek(offset, io.SeekStart)
+	if err != nil {
+		return err
+	}
 
-	err := m.filep.Sync()
+	err = binary.Write(m.filep, binary.LittleEndian, data)
+	if err != nil {
+		return err
+	}
+
+	err = m.filep.Sync()
 	if err != nil {
 		return err
 	}
