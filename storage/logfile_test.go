@@ -1,0 +1,222 @@
+package storage
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/samasno/raft-kv/raft"
+)
+
+func TestOpenLogfile(t *testing.T) {
+	dir := t.TempDir()
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	ismagic, err := readMagicNumber(lf.entriesfilep)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	if !ismagic {
+		t.Fatal("no magic in entries")
+	}
+
+	ismagic, err = readMagicNumber(lf.indexfilep)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	if !ismagic {
+		t.Fatal("no magic in index")
+	}
+
+	lf.Close()
+
+	lf, err = OpenLogFile(dir)
+
+	ismagic, err = readMagicNumber(lf.entriesfilep)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	if !ismagic {
+		t.Fatal("no magic in entries on reopen")
+	}
+
+	ismagic, err = readMagicNumber(lf.indexfilep)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	if !ismagic {
+		t.Fatal("no magic in index")
+	}
+
+	lf.Close()
+}
+
+func TestAppendEntries(t *testing.T) {
+	testEntries := raft.GenerateEntries(300, 0, 1)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntries)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	assertEqual(t, "Updated tailIndex index", lf.tailIndex.Index, 300)
+	assertEqual(t, "Updated tailindex term", lf.tailIndex.Term, 1)
+	lf.Close()
+
+	lf, err = OpenLogFile(dir)
+	lastLogIndex, _ := lf.LastLogIndex()
+	lastTerm, _ := lf.LastLogTerm()
+	assertEqual(t, "Got last index", lastLogIndex, 300)
+	assertEqual(t, "Got last term", lastTerm, 1)
+}
+
+func TestFetchIndex(t *testing.T) {
+	testEntries := raft.GenerateEntries(300, 0, 1)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntries)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	testIndex := uint64(33)
+	index, err := lf.fetchIndex(testIndex)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	assertEqual(t, "Fetched correct inded", index.Index, testIndex)
+}
+
+func TestGetEntry(t *testing.T) {
+	testEntries := raft.GenerateEntries(300, 0, 1)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntries)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	assertEqual(t, "Updated tailIndex index", lf.tailIndex.Index, 300)
+	assertEqual(t, "Updated tailindex term", lf.tailIndex.Term, 1)
+
+	testIndex := uint64(1)
+	entry, _ := lf.GetEntry(testIndex)
+
+	assertEqual(t, "Pulled correct index", entry.Index, testIndex)
+}
+
+func TestGetEntries(t *testing.T) {
+	testEntriesA := raft.GenerateEntries(150, 0, 1)
+	testEntriesB := raft.GenerateEntries(150, 150, 2)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesA)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesB)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	startIndex := uint64(77)
+	lastIndex := uint64(223)
+
+	entries, err := lf.GetEntries(startIndex, lastIndex)
+
+	assertEqual(t, "Got all entries", len(entries), int(lastIndex-startIndex+1))
+	counter := startIndex
+	for _, e := range entries {
+		assertEqual(t, "Got entries in order", e.Index, counter)
+		counter++
+	}
+
+	defer lf.Close()
+}
+
+func TestGetStartOfTerm(t *testing.T) {
+	testEntriesA := raft.GenerateEntries(33, 0, 1)
+	testEntriesB := raft.GenerateEntries(27, 33, 2)
+	testEntriesC := raft.GenerateEntries(20, 60, 3)
+
+	dir := t.TempDir()
+
+	lf, err := OpenLogFile(dir)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesA)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesB)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	err = lf.AppendEntries(testEntriesC)
+	if err != nil {
+		t.Fatalf("Failed to append: %s", err.Error())
+	}
+
+	termOne, _ := lf.StartOfTerm(1)
+	termTwo, _ := lf.StartOfTerm(2)
+	termThr, _ := lf.StartOfTerm(3)
+
+	assertEqual(t, "Got term one start", termOne, 1)
+	assertEqual(t, "Got term two", termTwo, 34)
+	assertEqual(t, "Got term three", termThr, 61)
+}
+
+func TestIndexSerializes(t *testing.T) {
+	index := LogIndex{
+		Index:         100,
+		Term:          3,
+		Offset:        3991292,
+		PayloadLength: 100,
+	}
+
+	input := bytes.NewBuffer(index.Marshall())
+
+	buf := LogIndex{}
+	recoveredIndex, _ := buf.Unmarshall(input)
+	assertEqual(t, "Recovered same Index", recoveredIndex.Index, index.Index)
+	assertEqual(t, "Recovered same term", recoveredIndex.Term, index.Term)
+
+	assertEqual(t, "Fixed length as expected", len(index.Marshall()), indexFixedSize)
+}
