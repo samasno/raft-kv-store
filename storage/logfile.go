@@ -322,7 +322,11 @@ func (l *LogFile) updateLatestIndex() (err error) {
 
 	lastIndexOffset := size - int64(indexFixedSize)
 	buf := make([]byte, indexFixedSize)
-	l.indexfilep.ReadAt(buf, lastIndexOffset)
+	_, err = l.indexfilep.ReadAt(buf, lastIndexOffset)
+	if err != nil {
+		return err
+	}
+
 	l.tailIndex, err = parseLogIndex(bytes.NewBuffer(buf))
 	if err != nil {
 		return err
@@ -422,6 +426,9 @@ func (l *LogFile) fetchIndex(index uint64) (LogIndex, error) {
 
 	buf := make([]byte, indexFixedSize)
 	_, err = l.indexfilep.ReadAt(buf, start)
+	if err != nil {
+		return logIndex, err
+	}
 
 	logIndex, err = logIndex.Unmarshall(bytes.NewBuffer(buf))
 	if err != nil {
