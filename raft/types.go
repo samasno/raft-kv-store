@@ -64,28 +64,28 @@ func (rm RaftMessageType) String() string {
 }
 
 type RaftMessage struct {
-	Type RaftMessageType
+	Type RaftMessageType `json:"type"`
 
 	// Common
-	To   uint64
-	From uint64
-	Term uint64
+	To   uint64 `json:"to"`
+	From uint64 `json:"from"`
+	Term uint64 `json:"term"`
 
 	// Append entry request
-	LeaderId         uint64
-	PreviousLogIndex uint64
-	PreviousLogTerm  uint64
-	LeaderCommit     uint64
+	LeaderId         uint64 `json:"leaderId"`
+	PreviousLogIndex uint64 `json:"previousLogIndex"`
+	PreviousLogTerm  uint64 `json:"previousLogTerm"`
+	LeaderCommit     uint64 `json:"leaderCommit"`
 
-	Entries    []RaftEntry
-	RawEntries [][]byte
+	Entries    []RaftEntry `json:"entries"`
+	RawEntries [][]byte    `json:"rawEntries"`
 
 	// Append entry response
-	Success bool
+	Success bool `json:"success"`
 
 	// Voting
-	CandidateId uint64
-	VoteGranted bool
+	CandidateId uint64 `json:"candidateId"`
+	VoteGranted bool   `json:"voteGranted"`
 }
 
 type RaftOutputType uint8
