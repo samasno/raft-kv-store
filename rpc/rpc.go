@@ -11,6 +11,8 @@ import (
 	"github.com/samasno/raft-kv/raft"
 )
 
+var jsonContentType string = "application/json"
+
 type RPC struct {
 	sender   RPCSender
 	receiver RPCReceiver
@@ -32,7 +34,7 @@ type RPCReceiver interface {
 }
 
 type RPCSender interface {
-	SendMessages([]raft.RaftMessage, error)
+	SendMessages([]raft.RaftMessage) error
 }
 
 type RaftServer struct {
@@ -83,12 +85,14 @@ func (s *RaftServer) handleForwardingRequests(w http.ResponseWriter, r *http.Req
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		println("body err")
 		writeResponse(w, http.StatusInternalServerError)
 		return
 	}
 
 	err = s.forwardIncomingRaftMessage(body)
 	if err != nil {
+		log.Println(err.Error())
 		writeResponse(w, http.StatusInternalServerError)
 		return
 	}
