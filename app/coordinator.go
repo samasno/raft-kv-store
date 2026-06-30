@@ -9,6 +9,13 @@ import (
 	"github.com/samasno/raft-kv/storage"
 )
 
+type RaftError uint8
+
+const (
+	ErrorNotLeader RaftError = iota
+	ErrorFailedValidation
+)
+
 type RaftClient interface {
 	Propose(raft.RaftMessage, chan raft.RaftMessage) chan raft.RaftMessage
 }
@@ -33,8 +40,8 @@ type RaftCoordinator struct {
 }
 
 type RaftProposal struct {
-	Message  raft.RaftMessage
-	Response chan raft.RaftMessage
+	Message raft.RaftMessage
+	Error   chan error
 }
 
 func (rc *RaftCoordinator) StartControlLoop(raftConfig *raft.RaftConfig, rpcConfig *rpc.RaftServerConfig, storageDir string) error {
@@ -131,10 +138,10 @@ func (rc *RaftCoordinator) ProcessMessage(msg raft.RaftMessage) {
 	rc.messagec <- msg
 }
 
-func (rc *RaftCoordinator) Propose(msg raft.RaftMessage, resp chan raft.RaftMessage) {
+func (rc *RaftCoordinator) Propose(msg raft.RaftMessage, resp chan error) {
 	proposal := RaftProposal{
-		Message:  msg,
-		Response: resp,
+		Message: msg,
+		Error:   resp,
 	}
 
 	rc.proposalc <- proposal
