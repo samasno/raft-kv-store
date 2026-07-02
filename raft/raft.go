@@ -183,6 +183,8 @@ func (r *Raft) tickFollower() {
 
 func (r *Raft) callFollower(m RaftMessage) {
 	switch m.Type {
+	case MessageNewEntry:
+		r.addNotLeaderResponseToOutput()
 	case MessageAppend:
 		r.followerAppendEntry(m)
 	case MessagePrevoteRequest:
@@ -263,6 +265,8 @@ func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
 
 func (r *Raft) callPrecandidate(m RaftMessage) {
 	switch m.Type {
+	case MessageNewEntry:
+		r.addNotLeaderResponseToOutput()
 	case MessagePrevoteResponse:
 		r.precandidateReceivePrevoteResponse(m)
 	case MessageAppend:
@@ -345,6 +349,8 @@ func (r *Raft) sendCandidateCampaign() {
 
 func (r *Raft) callCandidate(m RaftMessage) {
 	switch m.Type {
+	case MessageNewEntry:
+		r.addNotLeaderResponseToOutput()
 	case MessageAppend:
 		r.stepDownToFollowerIfStale(m)
 	case MessageVoteResponse:
@@ -708,6 +714,13 @@ func (r *Raft) addPrevoteResponseToOutput(success bool, to uint64) {
 
 func (r *Raft) addVoteResponseToOutput(success bool, to uint64) {
 	r.addResponseToOutput(MessageVoteResponse, success, success, to)
+}
+
+func (r *Raft) addNotLeaderResponseToOutput() {
+	msg := genericRaftMessage(MessageNotLeader, r.id, 0)
+	msg.LeaderId = r.leader
+	msg.Success = false
+	r.addOutboundMessage(msg)
 }
 
 func (r *Raft) addResponseToOutput(msgType RaftMessageType, success bool, voteGranted bool, to uint64) {

@@ -41,6 +41,7 @@ const (
 	MessageVoteResponse
 	MessageNewEntry
 	MessageInvalidRequest
+	MessageNotLeader
 )
 
 func (rm RaftMessageType) String() string {
