@@ -191,8 +191,6 @@ func (r *Raft) callFollower(m RaftMessage) {
 		r.followerReplyPrevoteRequest(m)
 	case MessageVoteRequest:
 		r.handleVoteRequest(m)
-	default:
-		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -273,8 +271,6 @@ func (r *Raft) callPrecandidate(m RaftMessage) {
 		r.stepDownToFollowerIfStale(m)
 	case MessageVoteRequest:
 		r.handleVoteRequest(m)
-	default:
-		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -355,8 +351,6 @@ func (r *Raft) callCandidate(m RaftMessage) {
 		r.stepDownToFollowerIfStale(m)
 	case MessageVoteResponse:
 		r.candidateReceiveVoteResponses(m)
-	default:
-		r.addResponseToOutput(MessageInvalidRequest, false, false, m.From)
 	}
 }
 
@@ -408,8 +402,6 @@ func (r *Raft) callLeader(m RaftMessage) {
 		r.stepDownToFollowerIfStale(m)
 	case MessageAppendResponse:
 		r.leaderHandleAppendMessageResponse(m)
-	default:
-		r.addResponseToOutput(m.Type, false, false, m.From)
 	}
 }
 
