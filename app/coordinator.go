@@ -104,7 +104,7 @@ func (rc *RaftCoordinator) StartControlLoop(raftConfig *raft.RaftConfig, rpcConf
 			rc.raft.Done()
 			exit = true
 		case <-ticker.C:
-			rc.raft.Tick()
+			rc.handleTick()
 		}
 		if exit {
 			break
@@ -118,22 +118,43 @@ func (rc *RaftCoordinator) handleMessage(msg raft.RaftMessage) {
 	rc.raft.Call(msg)
 	output := <-rc.raft.Ready()
 
+	err := rc.handleOutput(output)
+	if err != nil {
+		println("todo err")
+	}
+
+	rc.raft.Advance()
+}
+
+func (rc *RaftCoordinator) handleTick() {
+	rc.raft.Tick()
+	output := <-rc.raft.Ready()
+
+	err := rc.handleOutput(output)
+	if err != nil {
+		println("todo err")
+	}
+
+	rc.raft.Advance()
+}
+
+func (rc *RaftCoordinator) handleOutput(output *raft.RaftOutput) error {
 	var err error
 	for _, update := range output.UpdateMetadata {
 		err = rc.metadatafile.UpdateCurrentTerm(update.CurrentTerm)
 		if err != nil {
-			println("todo err")
+			return err
 		}
 
 		err = rc.metadatafile.UpdateVotedFor(update.VotedFor)
 		if err != nil {
-			println("todo err")
+			return err
 		}
 	}
 
 	err = rc.logfile.AppendEntries(output.WriteLogEntries)
 	if err != nil {
-		println("todo err")
+		return err
 	}
 
 	err = rc.stateMachine.Apply(output.ApplyEntries)
@@ -142,18 +163,20 @@ func (rc *RaftCoordinator) handleMessage(msg raft.RaftMessage) {
 	}
 
 	if 0 < len(output.ApplyEntries) {
+		rc.commitIndexWC.L.Lock()
 		rc.commitIndex = output.ApplyEntries[len(output.ApplyEntries)-1].Index
+		rc.commitIndexWC.L.Unlock()
 		rc.commitIndexWC.Broadcast()
 	}
 
 	for _, msg := range output.SendMessages {
 		err = rc.rpc.SendMessage(msg)
 		if err != nil {
-			println("todo err")
+			return err
 		}
 	}
 
-	rc.raft.Advance()
+	return nil
 }
 
 func (rc *RaftCoordinator) handleProposal(preq RaftProposalRequest) {
@@ -185,16 +208,18 @@ func (rc *RaftCoordinator) handleProposal(preq RaftProposalRequest) {
 
 	rc.raft.Advance()
 
-	lastEntry := output.WriteLogEntries[len(output.ApplyEntries)-1]
+	lastEntry := output.WriteLogEntries[len(output.WriteLogEntries)-1]
 
-	rc.commitIndexWC.L.Lock()
-	defer rc.commitIndexWC.L.Unlock()
-	for rc.commitIndex >= lastEntry.Index {
-		rc.commitIndexWC.Wait()
-	}
+	go func() {
+		rc.commitIndexWC.L.Lock()
+		defer rc.commitIndexWC.L.Unlock()
+		for !(rc.commitIndex >= lastEntry.Index) {
+			rc.commitIndexWC.Wait()
+		}
 
-	presp.Success = true
-	preq.Response <- presp
+		presp.Success = true
+		preq.Response <- presp
+	}()
 }
 
 func (rc *RaftCoordinator) ProcessMessage(msg raft.RaftMessage) {
@@ -275,7 +300,7 @@ func testingRaftConfigs(count int) map[uint64]*raft.RaftConfig {
 		peers := []uint64{}
 		for j := uint64(1); j <= uint64(count); j++ {
 			if j != i {
-				peers = append(peers, i)
+				peers = append(peers, j)
 			}
 		}
 
