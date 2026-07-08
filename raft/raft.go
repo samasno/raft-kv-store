@@ -227,7 +227,24 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 
 	r.addOutboundWriteEntries(m.Entries...)
 
-	r.addAppendEntryResponse(true, m.From, r.currentTerm)
+	msg := RaftMessage{
+		Type:    MessageAppendResponse,
+		Success: true,
+		From:    r.id,
+		To:      m.From,
+		Term:    r.currentTerm,
+	}
+
+	if 0 < len(m.Entries) {
+		lastEntry := m.Entries[len(m.Entries)-1]
+		msg.PreviousLogIndex = lastEntry.Index
+		msg.PreviousLogTerm = lastEntry.Term
+	} else {
+		msg.PreviousLogIndex = r.lastEntryIndex
+		msg.PreviousLogTerm = r.lastEntryTerm
+	}
+
+	r.addOutboundMessage(msg)
 }
 
 func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
@@ -422,6 +439,7 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 
 	r.addOutboundWriteEntries(newEntries...)
 	msg := RaftMessage{
+		LeaderId:         r.id,
 		From:             r.id,
 		Type:             MessageAppend,
 		Term:             r.currentTerm,
@@ -590,6 +608,7 @@ func (r *Raft) sendMessageToAllPeers(m RaftMessage) {
 	for _, id := range r.peers {
 		shallowCopy := m
 		shallowCopy.To = id
+		shallowCopy.From = r.id
 		messages = append(messages, shallowCopy)
 	}
 
