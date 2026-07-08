@@ -197,13 +197,13 @@ func (r *Raft) callFollower(m RaftMessage) {
 func (r *Raft) followerAppendEntry(m RaftMessage) {
 	if m.Term < r.currentTerm {
 		r.logger.Info("Append rejected with message term %d and current term %d", m.Term, r.currentTerm)
-		r.addAppendEntryResponse(false, m.From)
+		r.addAppendEntryResponse(false, m.From, r.currentTerm)
 		return
 	}
 
 	if m.LeaderId == 0 {
 		r.logger.Info("Append rejected due to no leader id ")
-		r.addAppendEntryResponse(false, m.From)
+		r.addAppendEntryResponse(false, m.From, r.currentTerm)
 		return
 	}
 
@@ -221,42 +221,42 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 
 	err := r.validateEntriesBeforeAppend(m.PreviousLogIndex, m.PreviousLogTerm, m.Entries)
 	if err != nil {
-		r.addAppendEntryResponse(false, m.From)
+		r.addAppendEntryResponse(false, m.From, r.currentTerm)
 		return
 	}
 
 	r.addOutboundWriteEntries(m.Entries...)
 
-	r.addAppendEntryResponse(true, m.From)
+	r.addAppendEntryResponse(true, m.From, r.currentTerm)
 }
 
 func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
 	if r.electionElapsed < r.electionTimeout-5 {
-		r.addPrevoteResponseToOutput(false, m.From)
+		r.addPrevoteResponseToOutput(false, m.From, r.currentTerm)
 		return
 	}
 
 	if 0 == m.CandidateId {
-		r.addPrevoteResponseToOutput(false, m.From)
+		r.addPrevoteResponseToOutput(false, m.From, r.currentTerm)
 		return
 	}
 
 	if r.currentTerm > m.PreviousLogTerm {
-		r.addPrevoteResponseToOutput(false, m.From)
+		r.addPrevoteResponseToOutput(false, m.From, r.currentTerm)
 		return
 	}
 
 	if r.currentTerm < m.PreviousLogTerm {
-		r.addPrevoteResponseToOutput(true, m.From)
+		r.addPrevoteResponseToOutput(true, m.From, r.currentTerm)
 		return
 	}
 
 	if r.lastEntryIndex <= m.PreviousLogIndex {
-		r.addPrevoteResponseToOutput(true, m.From)
+		r.addPrevoteResponseToOutput(true, m.From, r.currentTerm)
 		return
 	}
 
-	r.addPrevoteResponseToOutput(false, m.From)
+	r.addPrevoteResponseToOutput(false, m.From, r.currentTerm)
 }
 
 // PRECANDIDATE
@@ -289,7 +289,7 @@ func (r *Raft) precandidateReceivePrevoteResponse(m RaftMessage) {
 
 func (r *Raft) stepDownToFollowerIfStale(m RaftMessage) {
 	if m.Term <= r.currentTerm {
-		r.addAppendEntryResponse(false, m.From)
+		r.addAppendEntryResponse(false, m.From, r.currentTerm)
 		return
 	}
 
@@ -621,26 +621,26 @@ func (r *Raft) generateBroadcastMessages(messageType RaftMessageType) []RaftMess
 
 func (r *Raft) handleVoteRequest(m RaftMessage) {
 	if r.currentTerm > m.Term {
-		r.addVoteResponseToOutput(false, m.From)
+		r.addVoteResponseToOutput(false, m.From, m.Term)
 		return
 	}
 
 	if r.votedFor != 0 && r.votedFor != m.CandidateId {
-		r.addVoteResponseToOutput(false, m.From)
+		r.addVoteResponseToOutput(false, m.From, m.Term)
 		return
 	}
 
 	if r.lastEntryTerm > m.PreviousLogTerm {
-		r.addVoteResponseToOutput(false, m.From)
+		r.addVoteResponseToOutput(false, m.From, m.Term)
 		return
 	}
 	if r.lastEntryTerm == m.PreviousLogTerm && r.lastEntryIndex > m.PreviousLogIndex {
-		r.addVoteResponseToOutput(false, m.From)
+		r.addVoteResponseToOutput(false, m.From, m.Term)
 		return
 	}
 
 	r.addOutboundMetadataUpdate(RaftMetadataUpdate{VotedFor: m.CandidateId, CurrentTerm: m.Term})
-	r.addVoteResponseToOutput(true, m.From)
+	r.addVoteResponseToOutput(true, m.From, m.Term)
 }
 
 func (r *Raft) applyCommittedEntries() {
@@ -696,16 +696,16 @@ func (r *Raft) validateEntriesBeforeAppend(index, term uint64, entries []RaftEnt
 	return nil
 }
 
-func (r *Raft) addAppendEntryResponse(success bool, to uint64) {
-	r.addResponseToOutput(MessageAppendResponse, success, false, to)
+func (r *Raft) addAppendEntryResponse(success bool, to uint64, term uint64) {
+	r.addResponseToOutput(MessageAppendResponse, success, false, to, term)
 }
 
-func (r *Raft) addPrevoteResponseToOutput(success bool, to uint64) {
-	r.addResponseToOutput(MessagePrevoteResponse, success, success, to)
+func (r *Raft) addPrevoteResponseToOutput(success bool, to uint64, term uint64) {
+	r.addResponseToOutput(MessagePrevoteResponse, success, success, to, term)
 }
 
-func (r *Raft) addVoteResponseToOutput(success bool, to uint64) {
-	r.addResponseToOutput(MessageVoteResponse, success, success, to)
+func (r *Raft) addVoteResponseToOutput(success bool, to uint64, term uint64) {
+	r.addResponseToOutput(MessageVoteResponse, success, success, to, term)
 }
 
 func (r *Raft) addNotLeaderResponseToOutput() {
@@ -715,11 +715,11 @@ func (r *Raft) addNotLeaderResponseToOutput() {
 	r.addOutboundMessage(msg)
 }
 
-func (r *Raft) addResponseToOutput(msgType RaftMessageType, success bool, voteGranted bool, to uint64) {
+func (r *Raft) addResponseToOutput(msgType RaftMessageType, success bool, voteGranted bool, to uint64, term uint64) {
 	msg := genericRaftMessage(msgType, r.id, to)
 	msg.Success = success
 	msg.VoteGranted = voteGranted
-	msg.Term = r.currentTerm
+	msg.Term = term
 	r.addOutboundMessage(msg)
 }
 
