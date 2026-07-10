@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -102,7 +103,6 @@ func (rc *RaftCoordinator) StartControlLoop(raftConfig *raft.RaftConfig, rpcConf
 	for {
 		select {
 		case msg := <-rc.messagec:
-			// println(msg.Type.String(), raftConfig.Id, msg.From, msg.Success)
 			rc.handleMessage(msg)
 		case pr := <-rc.proposalc:
 			rc.handleProposal(pr)
@@ -126,7 +126,7 @@ func (rc *RaftCoordinator) handleMessage(msg raft.RaftMessage) {
 
 	err := rc.handleOutput(output)
 	if err != nil {
-		println("handle message:", err.Error())
+		log.Println(err.Error())
 	}
 
 	rc.raft.Advance()
@@ -137,7 +137,7 @@ func (rc *RaftCoordinator) handleTick() {
 	output := <-rc.raft.Ready()
 	err := rc.handleOutput(output)
 	if err != nil {
-		println(err.Error())
+		log.Println(err.Error())
 	}
 
 	rc.raft.Advance()
@@ -152,26 +152,22 @@ func (rc *RaftCoordinator) handleOutput(output *raft.RaftOutput) error {
 	for _, update := range output.UpdateMetadata {
 		err = rc.metadatafile.UpdateCurrentTerm(update.CurrentTerm)
 		if err != nil {
-			println("current term")
 			return err
 		}
 
 		err = rc.metadatafile.UpdateVotedFor(update.VotedFor)
 		if err != nil {
-			println("votedfor")
 			return err
 		}
 	}
 
 	err = rc.logfile.AppendEntries(output.WriteLogEntries)
 	if err != nil {
-		println("append")
 		return err
 	}
 
 	err = rc.stateMachine.Apply(output.ApplyEntries)
 	if err != nil {
-		println("apply")
 		return err
 	}
 
@@ -185,7 +181,6 @@ func (rc *RaftCoordinator) handleOutput(output *raft.RaftOutput) error {
 	for _, msg := range output.SendMessages {
 		err = rc.rpc.SendMessage(msg)
 		if err != nil {
-			println("output send")
 			return err
 		}
 	}
@@ -211,13 +206,13 @@ func (rc *RaftCoordinator) handleProposal(preq RaftProposalRequest) {
 	var err error
 	err = rc.logfile.AppendEntries(output.WriteLogEntries)
 	if err != nil {
-		println("p append")
+		log.Println(err.Error())
 	}
 
 	for _, msg := range output.SendMessages {
 		err = rc.rpc.SendMessage(msg)
 		if err != nil {
-			println("p send")
+			log.Println(err.Error())
 		}
 	}
 
@@ -269,7 +264,7 @@ func newTestStateMachine(id uint64) *testStateMachine {
 
 func (sm *testStateMachine) Apply(entries []raft.RaftEntry) error {
 	for _, e := range entries {
-		fmt.Printf("StateMachine #%d: index %d term %d", sm.id, e.Index, e.Term)
+		fmt.Printf("StateMachine #%d: index %d term %d\n", sm.id, e.Index, e.Term)
 		key := fmt.Sprintf("%d", e.Index)
 		sm.values[key] = string(e.Payload)
 	}

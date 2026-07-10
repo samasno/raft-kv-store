@@ -9,6 +9,8 @@ import (
 
 func TestControlLoopElection(t *testing.T) {
 	const count = 3
+	const numProposals = 5
+
 	raftConfigs := testingRaftConfigs(count)
 	rpcConfigs := testingRpcConfig(count)
 
@@ -29,55 +31,82 @@ func TestControlLoopElection(t *testing.T) {
 		t.Cleanup(func() { rc.Done() })
 	}
 
-	// wait for election; fail fast if any coordinator exits before timeout
+	// wait for election; fail fast if any coordinator exits
 	select {
 	case err := <-errc:
 		t.Fatalf("coordinator exited early: %v", err)
 	case <-time.After(10 * time.Second):
 	}
 
-	// send all proposals concurrently — non-leaders respond immediately,
-	// the leader only responds after followers acknowledge (full commit round-trip)
-	type proposalResult struct {
+	// phase 1: discover the leader by probing all nodes concurrently
+	type probeResult struct {
 		id   uint64
 		resp RaftProposalResponse
 	}
-	println("at result")
-	resultc := make(chan proposalResult, count)
+	probec := make(chan probeResult, count)
 	for i := uint64(1); i <= count; i++ {
 		id := i
 		resp := make(chan RaftProposalResponse, 1)
-		msg := raft.RaftMessage{
-			Type:       raft.MessageNewEntry,
-			RawEntries: [][]byte{[]byte("probe")},
-		}
 		go func() {
-			coordinators[id].Propose(msg, resp)
-			r := <-resp
-			resultc <- proposalResult{id, r}
+			coordinators[id].Propose(raft.RaftMessage{
+				Type:       raft.MessageNewEntry,
+				RawEntries: [][]byte{[]byte("probe")},
+			}, resp)
+			probec <- probeResult{id, <-resp}
 		}()
 	}
 
-	// collect all responses; timeout must cover full follower acknowledgement round-trip
-	leaderCount := 0
-	timeout := time.After(2 * time.Second)
+	var leaderID uint64
+	probeTimeout := time.After(5 * time.Second)
 	for received := 0; received < count; {
+		select {
+		case r := <-probec:
+			received++
+			if r.resp.Success {
+				leaderID = r.id
+			} else if leaderID == 0 {
+				leaderID = r.resp.LeaderId
+			}
+		case err := <-errc:
+			t.Fatalf("coordinator error during leader discovery: %v", err)
+		case <-probeTimeout:
+			t.Fatalf("timed out waiting for leader discovery")
+		}
+	}
+	if leaderID == 0 {
+		t.Fatalf("could not identify a leader")
+	}
+
+	// phase 2: send numProposals to the identified leader
+	resultc := make(chan RaftProposalResponse, numProposals)
+	for i := 0; i < numProposals; i++ {
+		resp := make(chan RaftProposalResponse, 1)
+		go func() {
+			coordinators[leaderID].Propose(raft.RaftMessage{
+				Type:       raft.MessageNewEntry,
+				RawEntries: [][]byte{[]byte("entry")},
+			}, resp)
+			resultc <- <-resp
+		}()
+	}
+
+	successes := 0
+	proposalTimeout := time.After(10 * time.Second)
+	for received := 0; received < numProposals; {
 		select {
 		case r := <-resultc:
 			received++
-			if r.resp.Success {
-				leaderCount++
+			if r.Success {
+				successes++
 			}
 		case err := <-errc:
 			t.Fatalf("coordinator error during proposals: %v", err)
-		case <-timeout:
-			t.Logf("timed out after %d/%d responses", received, count)
-			goto done
+		case <-proposalTimeout:
+			t.Fatalf("timed out after %d/%d proposals", received, numProposals)
 		}
 	}
 
-done:
-	if leaderCount != 1 {
-		t.Errorf("expected exactly 1 leader, got %d", leaderCount)
+	if successes != numProposals {
+		t.Errorf("expected %d successful proposals, got %d", numProposals, successes)
 	}
 }
