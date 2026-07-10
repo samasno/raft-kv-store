@@ -467,7 +467,6 @@ func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
 	r.followTracker[followerId] = f
 
 	r.leaderReconcileFollowerEntries(followerId)
-
 	r.leaderUpdateCommitIndex()
 }
 
@@ -580,7 +579,7 @@ func (r *Raft) leaderUpdateCommitIndex() {
 		return
 	}
 
-	r.commitIndex = max(r.commitIndex, maybeUpdate)
+	r.commitIndex = maybeUpdate
 	r.applyCommittedEntries()
 	r.leaderSendHeartbeat()
 }

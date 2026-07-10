@@ -738,11 +738,13 @@ func TestLeaderSendsUpdateForCommit(t *testing.T) {
 
 	response1 := baselineAppendEntryTestMessage(r)
 	response1.Type = MessageAppendResponse
+	response1.Success = true
 	response1.To = r.id
 	response1.From = 2
 
 	response2 := baselineAppendEntryTestMessage(r)
 	response2.Type = MessageAppendResponse
+	response2.Success = true
 	response2.To = r.id
 	response2.From = 3
 
@@ -755,7 +757,6 @@ func TestLeaderSendsUpdateForCommit(t *testing.T) {
 	output = <-r.Ready()
 	r.Advance()
 
-	// must include initial leader commit in apply entries count
 	baseValidationCycleOutput(t, output, 4, 0, 0, len(rawEntries)+1)
 }
 
