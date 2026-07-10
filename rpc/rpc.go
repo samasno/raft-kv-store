@@ -107,7 +107,6 @@ func (s *RaftServer) Run() error {
 
 	go func() {
 		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			println("listen and serve")
 			log.Println(err.Error())
 		}
 	}()
