@@ -142,7 +142,8 @@ func (s *RaftServer) forwardIncomingRaftMessage(data []byte) error {
 		return err
 	}
 
-	s.receivec <- msg
+	go func() { s.receivec <- msg }()
+
 	return nil
 }
 

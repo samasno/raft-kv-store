@@ -380,7 +380,7 @@ func TestPrecandidateAcceptsVotesAndTransitions(t *testing.T) {
 	cycleNTicks(r, 6)
 
 	assertEqual(t, "Went into precandidate state", r.currentState.String(), raft_precandidate.String())
-
+	assertEqual(t, "Voted for self", r.votes, 1)
 	r.electionTimeout = 5
 
 	cycleNTicks(r, 6)
@@ -391,16 +391,14 @@ func TestPrecandidateAcceptsVotesAndTransitions(t *testing.T) {
 		r.Call(reject)
 		<-r.Ready()
 		r.Advance()
-		assertEqual(t, "Votes are not counted", r.votes, 0)
+		assertEqual(t, "Votes are not counted", r.votes, 1)
 		assertEqual(t, "Must stay in precandidate state", r.currentState.String(), raft_precandidate.String())
 	}
 
-	for range 2 {
-		r.Call(grant)
-		output := <-r.Ready()
-		assert(t, output == nil, "Output should be nil")
-		r.Advance()
-	}
+	r.Call(grant)
+	output := <-r.Ready()
+	assert(t, output == nil, "Output should be nil")
+	r.Advance()
 
 	r.Call(grant)
 	<-r.Ready()

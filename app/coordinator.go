@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,7 +49,7 @@ type RaftCoordinator struct {
 func NewCoordinator() *RaftCoordinator {
 	return &RaftCoordinator{
 		proposalc:     make(chan RaftProposalRequest),
-		messagec:      make(chan raft.RaftMessage),
+		messagec:      make(chan raft.RaftMessage, 100),
 		donec:         make(chan struct{}),
 		commitIndexWC: *sync.NewCond(&sync.Mutex{}),
 	}
@@ -85,6 +86,10 @@ func (rc *RaftCoordinator) StartControlLoop(raftConfig *raft.RaftConfig, rpcConf
 	}
 	defer rc.rpc.Close()
 
+	if err = rc.rpc.Run(); err != nil {
+		return err
+	}
+
 	rc.stateMachine = stateMachine
 
 	rc.raft, err = raft.NewRaftInstance(rc.metadatafile, rc.logfile, *raftConfig)
@@ -97,6 +102,7 @@ func (rc *RaftCoordinator) StartControlLoop(raftConfig *raft.RaftConfig, rpcConf
 	for {
 		select {
 		case msg := <-rc.messagec:
+			// println(msg.Type.String(), raftConfig.Id, msg.From, msg.Success)
 			rc.handleMessage(msg)
 		case pr := <-rc.proposalc:
 			rc.handleProposal(pr)
@@ -120,7 +126,7 @@ func (rc *RaftCoordinator) handleMessage(msg raft.RaftMessage) {
 
 	err := rc.handleOutput(output)
 	if err != nil {
-		println("todo err")
+		println("handle message:", err.Error())
 	}
 
 	rc.raft.Advance()
@@ -129,37 +135,44 @@ func (rc *RaftCoordinator) handleMessage(msg raft.RaftMessage) {
 func (rc *RaftCoordinator) handleTick() {
 	rc.raft.Tick()
 	output := <-rc.raft.Ready()
-
 	err := rc.handleOutput(output)
 	if err != nil {
-		println("todo err")
+		println(err.Error())
 	}
 
 	rc.raft.Advance()
 }
 
 func (rc *RaftCoordinator) handleOutput(output *raft.RaftOutput) error {
+	if nil == output {
+		return nil
+	}
+
 	var err error
 	for _, update := range output.UpdateMetadata {
 		err = rc.metadatafile.UpdateCurrentTerm(update.CurrentTerm)
 		if err != nil {
+			println("current term")
 			return err
 		}
 
 		err = rc.metadatafile.UpdateVotedFor(update.VotedFor)
 		if err != nil {
+			println("votedfor")
 			return err
 		}
 	}
 
 	err = rc.logfile.AppendEntries(output.WriteLogEntries)
 	if err != nil {
+		println("append")
 		return err
 	}
 
 	err = rc.stateMachine.Apply(output.ApplyEntries)
 	if err != nil {
-		println("todo err")
+		println("apply")
+		return err
 	}
 
 	if 0 < len(output.ApplyEntries) {
@@ -172,6 +185,7 @@ func (rc *RaftCoordinator) handleOutput(output *raft.RaftOutput) error {
 	for _, msg := range output.SendMessages {
 		err = rc.rpc.SendMessage(msg)
 		if err != nil {
+			println("output send")
 			return err
 		}
 	}
@@ -188,6 +202,7 @@ func (rc *RaftCoordinator) handleProposal(preq RaftProposalRequest) {
 		msg := output.SendMessages[0]
 		presp.Success = false
 		presp.LeaderId = msg.LeaderId
+		rc.raft.Advance()
 		preq.Response <- presp
 		return
 	}
@@ -196,13 +211,13 @@ func (rc *RaftCoordinator) handleProposal(preq RaftProposalRequest) {
 	var err error
 	err = rc.logfile.AppendEntries(output.WriteLogEntries)
 	if err != nil {
-		println("todo err")
+		println("p append")
 	}
 
 	for _, msg := range output.SendMessages {
 		err = rc.rpc.SendMessage(msg)
 		if err != nil {
-			println("todo err")
+			println("p send")
 		}
 	}
 
@@ -275,7 +290,7 @@ func testingRpcConfig(count int) map[uint64]*rpc.RaftServerConfig {
 	// make peers
 	for i := uint64(1); i <= uint64(count); i++ {
 		peer := rpc.Peer{
-			Url: fmt.Sprintf("127.0.0.1:800%d", i),
+			Url: fmt.Sprintf("http://127.0.0.1:800%d", i),
 		}
 		peers[i] = peer
 	}
@@ -284,10 +299,9 @@ func testingRpcConfig(count int) map[uint64]*rpc.RaftServerConfig {
 	for k, v := range peers {
 		config := &rpc.RaftServerConfig{
 			Id:    k,
-			Addr:  v.Url,
+			Addr:  strings.TrimLeft(v.Url, "http://"),
 			Peers: peers,
 		}
-
 		configs[k] = config
 	}
 	// make config for each peer
