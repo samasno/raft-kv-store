@@ -576,7 +576,7 @@ func (r *Raft) leaderUpdateCommitIndex() {
 
 	// maybe update in case tracking not up to date, safeguard to prevent lowering commit
 	maybeUpdate := latestEntries[len(r.peers)/2]
-	if maybeUpdate < r.commitIndex {
+	if maybeUpdate <= r.commitIndex {
 		return
 	}
 
