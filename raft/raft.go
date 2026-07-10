@@ -329,6 +329,7 @@ func (r *Raft) tickPrecandidate() {
 
 func (r *Raft) transitionPrecandidate() {
 	r.resetElectionTimeout()
+	r.votes++
 	r.currentState = raft_precandidate
 	r.call = r.callPrecandidate
 	r.tick = r.tickPrecandidate
@@ -453,6 +454,10 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 }
 
 func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
+	if !m.Success {
+		return
+	}
+
 	followerId := m.From
 	f := r.followTracker[followerId]
 
