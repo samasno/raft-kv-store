@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -99,12 +100,18 @@ func (s *RaftServer) HandleRequestVote(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *RaftServer) Run() error {
+	ln, err := net.Listen("tcp", s.srv.Addr)
+	if err != nil {
+		return err
+	}
+
 	go func() {
-		if err := s.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			println("listen and serve")
 			log.Println(err.Error())
 		}
 	}()
+
 	return nil
 }
 
