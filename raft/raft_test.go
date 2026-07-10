@@ -380,7 +380,7 @@ func TestPrecandidateAcceptsVotesAndTransitions(t *testing.T) {
 	cycleNTicks(r, 6)
 
 	assertEqual(t, "Went into precandidate state", r.currentState.String(), raft_precandidate.String())
-
+	assertEqual(t, "Voted for self", r.votes, 1)
 	r.electionTimeout = 5
 
 	cycleNTicks(r, 6)
@@ -391,16 +391,14 @@ func TestPrecandidateAcceptsVotesAndTransitions(t *testing.T) {
 		r.Call(reject)
 		<-r.Ready()
 		r.Advance()
-		assertEqual(t, "Votes are not counted", r.votes, 0)
+		assertEqual(t, "Votes are not counted", r.votes, 1)
 		assertEqual(t, "Must stay in precandidate state", r.currentState.String(), raft_precandidate.String())
 	}
 
-	for range 2 {
-		r.Call(grant)
-		output := <-r.Ready()
-		assert(t, output == nil, "Output should be nil")
-		r.Advance()
-	}
+	r.Call(grant)
+	output := <-r.Ready()
+	assert(t, output == nil, "Output should be nil")
+	r.Advance()
 
 	r.Call(grant)
 	<-r.Ready()
@@ -740,11 +738,13 @@ func TestLeaderSendsUpdateForCommit(t *testing.T) {
 
 	response1 := baselineAppendEntryTestMessage(r)
 	response1.Type = MessageAppendResponse
+	response1.Success = true
 	response1.To = r.id
 	response1.From = 2
 
 	response2 := baselineAppendEntryTestMessage(r)
 	response2.Type = MessageAppendResponse
+	response2.Success = true
 	response2.To = r.id
 	response2.From = 3
 
@@ -757,7 +757,6 @@ func TestLeaderSendsUpdateForCommit(t *testing.T) {
 	output = <-r.Ready()
 	r.Advance()
 
-	// must include initial leader commit in apply entries count
 	baseValidationCycleOutput(t, output, 4, 0, 0, len(rawEntries)+1)
 }
 
