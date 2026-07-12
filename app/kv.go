@@ -105,9 +105,8 @@ func (kv *KVMap) apply(entries []raft.RaftEntry) error {
 
 	for _, e := range entries {
 		command := Command{}
-		err := json.Unmarshal(e.Payload, &command)
-		if err != nil {
-			return err
+		if err := json.Unmarshal(e.Payload, &command); err != nil {
+			continue
 		}
 
 		kv.handle(command)
