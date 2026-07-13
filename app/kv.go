@@ -101,7 +101,11 @@ func (kv *KVMap) handle(command Command) Response {
 }
 
 func (kv *KVMap) apply(entries []raft.RaftEntry) error {
-	lastIndex := uint64(0)
+	if nil == entries || 0 == len(entries) {
+		return nil
+	}
+
+	lastIndex := entries[len(entries)-1].Index
 
 	for _, e := range entries {
 		command := Command{}
@@ -110,7 +114,6 @@ func (kv *KVMap) apply(entries []raft.RaftEntry) error {
 		}
 
 		kv.handle(command)
-		lastIndex = e.Index
 	}
 
 	err := kv.UpdateCheckpoint(lastIndex)
