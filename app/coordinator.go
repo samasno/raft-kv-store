@@ -20,7 +20,7 @@ const (
 )
 
 type RaftClient interface {
-	Propose(raft.RaftMessage, chan raft.RaftMessage) chan raft.RaftMessage
+	Propose(raft.RaftMessage, chan RaftProposalResponse)
 }
 
 type StateMachine interface {
@@ -46,6 +46,8 @@ type RaftCoordinator struct {
 
 	stateMachine StateMachine
 }
+
+var _ RaftClient = (*RaftCoordinator)(nil)
 
 func NewCoordinator() *RaftCoordinator {
 	return &RaftCoordinator{
