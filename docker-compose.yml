@@ -1,0 +1,47 @@
+services:
+  node1:
+    build: .
+    environment:
+      NODE_ID: "1"
+      RAFT_ADDR: "0.0.0.0:8000"
+      KV_ADDR: "0.0.0.0:9000"
+      PEERS: "2=http://node2:8000,3=http://node3:8000"
+      KV_PEERS: "2=http://node2:9000,3=http://node3:9000"
+      STORAGE_DIR: "/data"
+    ports:
+      - "9001:9000"
+    volumes:
+      - node1-data:/data
+
+  node2:
+    build: .
+    environment:
+      NODE_ID: "2"
+      RAFT_ADDR: "0.0.0.0:8000"
+      KV_ADDR: "0.0.0.0:9000"
+      PEERS: "1=http://node1:8000,3=http://node3:8000"
+      KV_PEERS: "1=http://node1:9000,3=http://node3:9000"
+      STORAGE_DIR: "/data"
+    ports:
+      - "9002:9000"
+    volumes:
+      - node2-data:/data
+
+  node3:
+    build: .
+    environment:
+      NODE_ID: "3"
+      RAFT_ADDR: "0.0.0.0:8000"
+      KV_ADDR: "0.0.0.0:9000"
+      PEERS: "1=http://node1:8000,2=http://node2:8000"
+      KV_PEERS: "1=http://node1:9000,2=http://node2:9000"
+      STORAGE_DIR: "/data"
+    ports:
+      - "9003:9000"
+    volumes:
+      - node3-data:/data
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:

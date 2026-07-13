@@ -68,18 +68,35 @@ type RaftProposalResponse struct {
 	LeaderId uint64
 }
 
+func (rc *RaftCoordinator) OpenStorage(storageDir string) (*storage.LogFile, error) {
+	var err error
+	rc.logfile, err = storage.OpenLogFile(storageDir)
+	if err != nil {
+		return nil, err
+	}
+	rc.metadatafile, err = storage.OpenMetadataFile(storageDir)
+	if err != nil {
+		return nil, err
+	}
+	return rc.logfile, nil
+}
+
 func (rc *RaftCoordinator) StartControlLoop(raftConfig *raft.RaftConfig, rpcConfig *rpc.RaftServerConfig, storageDir string, stateMachine StateMachine) error {
 	var err error
 
-	rc.logfile, err = storage.OpenLogFile(storageDir)
-	if err != nil {
-		return err
+	if rc.logfile == nil {
+		rc.logfile, err = storage.OpenLogFile(storageDir)
+		if err != nil {
+			return err
+		}
 	}
 	defer rc.logfile.Close()
 
-	rc.metadatafile, err = storage.OpenMetadataFile(storageDir)
-	if err != nil {
-		return err
+	if rc.metadatafile == nil {
+		rc.metadatafile, err = storage.OpenMetadataFile(storageDir)
+		if err != nil {
+			return err
+		}
 	}
 	defer rc.metadatafile.Close()
 

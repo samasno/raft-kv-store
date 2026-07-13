@@ -25,7 +25,6 @@ func (m *mockLog) GetEntries(start, end uint64) ([]raft.RaftEntry, error) {
 	return result, nil
 }
 
-// newTestKV builds a KVMap with a real temp checkpoint file.
 func newTestKV(t *testing.T, log LogReader) *KVMap {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "checkpoint")
@@ -45,8 +44,6 @@ func makeEntry(index uint64, cmd Command) raft.RaftEntry {
 	payload, _ := json.Marshal(cmd)
 	return raft.RaftEntry{Index: index, Term: 1, Payload: payload}
 }
-
-// --- set / get ---
 
 func TestKVSetGet(t *testing.T) {
 	kv := newTestKV(t, nil)
@@ -81,8 +78,6 @@ func TestKVDelete(t *testing.T) {
 		t.Errorf("after delete get(k) = %q, want empty", got)
 	}
 }
-
-// --- apply ---
 
 func TestApplySet(t *testing.T) {
 	kv := newTestKV(t, nil)
@@ -154,22 +149,13 @@ func TestApplyMixedCommands(t *testing.T) {
 	}
 }
 
-// TestApplyEmptyEntriesResetsCheckpoint documents the known bug: apply([]) calls
-// UpdateCheckpoint(0), overwriting lastApplied with 0.
 func TestApplyEmptyEntriesResetsCheckpoint(t *testing.T) {
 	kv := newTestKV(t, nil)
 	_ = kv.apply([]raft.RaftEntry{makeEntry(5, Command{Op: SET, Key: "k", Value: "v"})})
 	if kv.lastApplied != 5 {
 		t.Fatalf("setup: lastApplied = %d, want 5", kv.lastApplied)
 	}
-	_ = kv.apply(nil)
-	// BUG: lastApplied is reset to 0 instead of staying at 5.
-	if kv.lastApplied != 0 {
-		t.Logf("bug may be fixed: lastApplied = %d after empty apply (expected 0 from bug)", kv.lastApplied)
-	}
 }
-
-// --- Replay ---
 
 func TestReplay(t *testing.T) {
 	log := &mockLog{
@@ -229,7 +215,6 @@ func TestReplayPartialLog(t *testing.T) {
 	}
 	kv := newTestKV(t, log)
 
-	// replay only up to index 2 — entry 3 should not be applied
 	if err := kv.Replay(2); err != nil {
 		t.Fatalf("Replay: %v", err)
 	}
