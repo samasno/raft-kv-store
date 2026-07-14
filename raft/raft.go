@@ -148,10 +148,6 @@ func (r *Raft) advance() {
 		r.votedFor = r.pending.votedFor
 	}
 
-	if r.currentTerm < r.pending.currentTerm {
-		r.votedFor = 0
-	}
-
 	r.pending = nil
 }
 
@@ -248,6 +244,7 @@ func (r *Raft) followerAppendEntry(m RaftMessage) {
 }
 
 func (r *Raft) followerReplyPrevoteRequest(m RaftMessage) {
+	// using a 5 tick window for pre-elections. grants a prevote to kickoff election
 	if r.electionElapsed < r.electionTimeout-5 {
 		r.addPrevoteResponseToOutput(false, m.From, r.currentTerm)
 		return
@@ -409,6 +406,7 @@ func (r *Raft) transitionLeader() {
 	r.leader = r.id
 	r.initFollowTracking()
 
+	// leader immediately writes entry here to initiate commit at its current point, reconcile followers
 	r.leaderWriteNewEntries([][]byte{nil})
 }
 
@@ -573,8 +571,8 @@ func (r *Raft) leaderUpdateCommitIndex() {
 		return latestEntries[i] > latestEntries[j]
 	})
 
-	// maybe update in case tracking not up to date, safeguard to prevent lowering commit
-	maybeUpdate := latestEntries[len(r.peers)/2]
+	// maybeUpdate in case tracking not up to date, safeguard to prevent lowering commit
+	maybeUpdate := latestEntries[len(r.peers)/2] // leader is +1 to make quorum
 	if maybeUpdate <= r.commitIndex {
 		return
 	}

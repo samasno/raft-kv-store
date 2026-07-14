@@ -51,6 +51,8 @@ var _ RaftClient = (*RaftCoordinator)(nil)
 
 func NewCoordinator() *RaftCoordinator {
 	return &RaftCoordinator{
+		// buffer messagec so incoming messages don't get blocked
+		// proposalc unbuffered to keep proposals serialized
 		proposalc:     make(chan RaftProposalRequest),
 		messagec:      make(chan raft.RaftMessage, 100),
 		donec:         make(chan struct{}),
@@ -242,6 +244,7 @@ func (rc *RaftCoordinator) handleProposal(preq RaftProposalRequest) {
 	go func() {
 		rc.commitIndexWC.L.Lock()
 		defer rc.commitIndexWC.L.Unlock()
+		// commitIndex may overshoot on responses, use >= to avoid deadlock
 		for !(rc.commitIndex >= lastEntry.Index) {
 			rc.commitIndexWC.Wait()
 		}
