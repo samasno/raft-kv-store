@@ -29,9 +29,7 @@ func NewKVServer(kv KVStore, rc RaftClient, addr string, peers map[uint64]string
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT "+baseRecordPath, ks.PutRecord)
-	mux.HandleFunc("GET "+baseRecordPath, ks.GetRecord)
-	mux.HandleFunc("DELETE "+baseRecordPath, ks.DeleteRecord)
+	mux.HandleFunc("POST "+baseRecordPath, ks.HandleRequest)
 
 	ks.srv = &http.Server{
 		Handler: mux,
@@ -73,7 +71,7 @@ func readCommand(r io.Reader) (Command, error) {
 	return command, nil
 }
 
-func (k *KVServer) PutRecord(w http.ResponseWriter, r *http.Request) {
+func (k *KVServer) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	command, err := readCommand(r.Body)
 	if err != nil {
@@ -81,52 +79,30 @@ func (k *KVServer) PutRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if KVOps(strings.ToUpper((string(command.Op)))) != SET {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Only accepts SET commands"))
-		return
-	}
-
-	response, err := k.handleProposal(command)
+	response, err := k.handleCommand(command)
 	if err != nil {
 		serverError(w)
 		return
 	}
 
 	if !response.Success {
-		writeResponse(w, response, http.StatusServiceUnavailable)
+		writeResponse(w, response, http.StatusBadRequest)
 		return
 	}
 
 	writeResponse(w, response, http.StatusOK)
 }
 
-func (k *KVServer) DeleteRecord(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-	command, err := readCommand(r.Body)
-	if err != nil {
-		serverError(w)
-		return
+func (k *KVServer) handleCommand(command Command) (Response, error) {
+	op := KVOps(strings.ToUpper(string(command.Op)))
+	switch op {
+	case GET:
+		return k.handleGet(command)
+	case DEL, SET:
+		return k.handleProposal(command)
+	default:
+		return Response{Success: false, Key: "", Value: "Invalid op"}, nil
 	}
-
-	if KVOps(strings.ToUpper((string(command.Op)))) != DEL {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Only accepts DEL commands"))
-		return
-	}
-
-	response, err := k.handleProposal(command)
-	if err != nil {
-		serverError(w)
-		return
-	}
-
-	if !response.Success {
-		writeResponse(w, response, http.StatusServiceUnavailable)
-		return
-	}
-
-	writeResponse(w, response, http.StatusOK)
 }
 
 func (k *KVServer) handleProposal(command Command) (Response, error) {
@@ -166,25 +142,12 @@ func (k *KVServer) sendCommandToPeer(peerId uint64, command Command) (Response, 
 		return peerResponse, err
 	}
 
-	method := ""
-
-	switch command.Op {
-	case DEL:
-		method = "DELETE"
-	case SET:
-		method = "PUT"
-	case GET:
-		method = "GET"
-	default:
-		return peerResponse, fmt.Errorf("Invalid op")
-	}
-
 	to, err := url.JoinPath(peerUrl, baseRecordPath)
 	if err != nil {
 		return peerResponse, err
 	}
 
-	req, err := http.NewRequest(method, to, bytes.NewBuffer(commandJson))
+	req, err := http.NewRequest(http.MethodPost, to, bytes.NewBuffer(commandJson))
 	if err != nil {
 		return peerResponse, err
 	}
@@ -207,21 +170,7 @@ func (k *KVServer) sendCommandToPeer(peerId uint64, command Command) (Response, 
 	return peerResponse, nil
 }
 
-func (k *KVServer) GetRecord(w http.ResponseWriter, r *http.Request) {
-	command := Command{}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		serverError(w)
-		return
-	}
-	defer r.Body.Close()
-
-	err = json.Unmarshal(body, &command)
-	if err != nil {
-		serverError(w)
-		return
-	}
-
+func (k *KVServer) handleGet(command Command) (Response, error) {
 	value := k.kv.Get(command.Key)
 	response := Response{
 		Success: true,
@@ -229,7 +178,7 @@ func (k *KVServer) GetRecord(w http.ResponseWriter, r *http.Request) {
 		Value:   value,
 	}
 
-	writeResponse(w, response, http.StatusOK)
+	return response, nil
 }
 
 func writeResponse(w http.ResponseWriter, response Response, status int) {

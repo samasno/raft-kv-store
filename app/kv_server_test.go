@@ -24,13 +24,12 @@ type mockRaftClient struct {
 func (m *mockRaftClient) Propose(_ raft.RaftMessage, c chan RaftProposalResponse) {
 	go func() { c <- m.resp }()
 }
-func (m *mockRaftClient) Send(_ raft.RaftMessage) error                           { return nil }
 
 type mockKVStore struct {
 	values map[string]string
 }
 
-func (m *mockKVStore) Get(key string) string            { return m.values[key] }
+func (m *mockKVStore) Get(key string) string             { return m.values[key] }
 func (m *mockKVStore) ApplyRecord(_ []raft.RaftEntry) error { return nil }
 
 // handlerServer builds a KVServer wired to httptest for handler unit tests.
@@ -53,33 +52,23 @@ func decodeResponse(t *testing.T, body []byte) Response {
 	return r
 }
 
-// --- handler unit tests ---
+// --- sendCommandToPeer unit tests ---
 
-func TestPutRecordRejectsNonSetOp(t *testing.T) {
-	ks := handlerServer(&mockRaftClient{}, &mockKVStore{}, nil)
-	req := httptest.NewRequest(http.MethodPut, "/record", encodeBody(t, Command{Op: GET, Key: "k"}))
-	w := httptest.NewRecorder()
-	ks.PutRecord(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
+func TestSendCommandToPeerNoPeer(t *testing.T) {
+	ks := handlerServer(&mockRaftClient{}, &mockKVStore{}, map[uint64]string{})
+	_, err := ks.sendCommandToPeer(99, Command{Op: SET, Key: "k", Value: "v"})
+	if err == nil {
+		t.Error("expected error for missing peer, got nil")
 	}
 }
 
-func TestDeleteRecordRejectsNonDelOp(t *testing.T) {
-	ks := handlerServer(&mockRaftClient{}, &mockKVStore{}, nil)
-	req := httptest.NewRequest(http.MethodDelete, "/record", encodeBody(t, Command{Op: SET, Key: "k", Value: "v"}))
-	w := httptest.NewRecorder()
-	ks.DeleteRecord(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
+// --- POST /record (HandleRequest) tests ---
 
-func TestPutRecordSuccess(t *testing.T) {
+func TestHandleRequestSet(t *testing.T) {
 	ks := handlerServer(&mockRaftClient{resp: RaftProposalResponse{Success: true}}, &mockKVStore{}, nil)
-	req := httptest.NewRequest(http.MethodPut, "/record", encodeBody(t, Command{Op: SET, Key: "k", Value: "v"}))
+	req := httptest.NewRequest(http.MethodPost, "/record", encodeBody(t, Command{Op: SET, Key: "k", Value: "v"}))
 	w := httptest.NewRecorder()
-	ks.PutRecord(w, req)
+	ks.HandleRequest(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body)
 	}
@@ -89,11 +78,40 @@ func TestPutRecordSuccess(t *testing.T) {
 	}
 }
 
-func TestDeleteRecordSuccess(t *testing.T) {
-	ks := handlerServer(&mockRaftClient{resp: RaftProposalResponse{Success: true}}, &mockKVStore{}, nil)
-	req := httptest.NewRequest(http.MethodDelete, "/record", encodeBody(t, Command{Op: DEL, Key: "k"}))
+func TestHandleRequestGet(t *testing.T) {
+	kv := &mockKVStore{values: map[string]string{"x": "42"}}
+	ks := handlerServer(&mockRaftClient{}, kv, nil)
+	req := httptest.NewRequest(http.MethodPost, "/record", encodeBody(t, Command{Op: GET, Key: "x"}))
 	w := httptest.NewRecorder()
-	ks.DeleteRecord(w, req)
+	ks.HandleRequest(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	resp := decodeResponse(t, w.Body.Bytes())
+	if resp.Value != "42" {
+		t.Errorf("get(x) = %q, want %q", resp.Value, "42")
+	}
+}
+
+func TestHandleRequestGetMissingKey(t *testing.T) {
+	ks := handlerServer(&mockRaftClient{}, &mockKVStore{values: map[string]string{}}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/record", encodeBody(t, Command{Op: GET, Key: "missing"}))
+	w := httptest.NewRecorder()
+	ks.HandleRequest(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	resp := decodeResponse(t, w.Body.Bytes())
+	if resp.Value != "" {
+		t.Errorf("missing key returned %q, want empty", resp.Value)
+	}
+}
+
+func TestHandleRequestDel(t *testing.T) {
+	ks := handlerServer(&mockRaftClient{resp: RaftProposalResponse{Success: true}}, &mockKVStore{}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/record", encodeBody(t, Command{Op: DEL, Key: "k"}))
+	w := httptest.NewRecorder()
+	ks.HandleRequest(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body)
 	}
@@ -103,9 +121,34 @@ func TestDeleteRecordSuccess(t *testing.T) {
 	}
 }
 
-func TestPutRecordProxiesToLeader(t *testing.T) {
-	// Fake leader KVServer: accepts PUT and returns success.
+func TestHandleRequestInvalidOp(t *testing.T) {
+	ks := handlerServer(&mockRaftClient{}, &mockKVStore{}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/record", encodeBody(t, Command{Op: "INVALID", Key: "k"}))
+	w := httptest.NewRecorder()
+	ks.HandleRequest(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for unknown op, got %d", w.Code)
+	}
+}
+
+// TestHandleRequestOpCaseInsensitive verifies that lowercase op values are normalized.
+func TestHandleRequestOpCaseInsensitive(t *testing.T) {
+	ks := handlerServer(&mockRaftClient{resp: RaftProposalResponse{Success: true}}, &mockKVStore{}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/record", encodeBody(t, Command{Op: "set", Key: "k", Value: "v"}))
+	w := httptest.NewRecorder()
+	ks.HandleRequest(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for lowercase op (handleCommand normalizes), got %d", w.Code)
+	}
+}
+
+// TestHandleRequestProxiesToLeader verifies that a follower receiving POST proxies
+// SET to the leader via POST on the leader's /record endpoint.
+func TestHandleRequestProxiesToLeader(t *testing.T) {
 	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected leader to receive POST, got %s", r.Method)
+		}
 		json.NewEncoder(w).Encode(Response{Success: true, Key: "k"})
 	}))
 	defer leader.Close()
@@ -116,75 +159,15 @@ func TestPutRecordProxiesToLeader(t *testing.T) {
 		&mockKVStore{},
 		peers,
 	)
-	req := httptest.NewRequest(http.MethodPut, "/record", encodeBody(t, Command{Op: SET, Key: "k", Value: "v"}))
+	req := httptest.NewRequest(http.MethodPost, "/record", encodeBody(t, Command{Op: SET, Key: "k", Value: "v"}))
 	w := httptest.NewRecorder()
-	ks.PutRecord(w, req)
+	ks.HandleRequest(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200 after proxy, got %d: %s", w.Code, w.Body)
 	}
 	resp := decodeResponse(t, w.Body.Bytes())
 	if !resp.Success {
 		t.Error("proxied response.Success is false")
-	}
-}
-
-func TestPutRecordNoLeaderKnown(t *testing.T) {
-	// LeaderId == 0 means no leader elected yet — peer lookup fails → 500.
-	ks := handlerServer(
-		&mockRaftClient{resp: RaftProposalResponse{Success: false, LeaderId: 0}},
-		&mockKVStore{},
-		map[uint64]string{},
-	)
-	req := httptest.NewRequest(http.MethodPut, "/record", encodeBody(t, Command{Op: SET, Key: "k", Value: "v"}))
-	w := httptest.NewRecorder()
-	ks.PutRecord(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 when no leader known, got %d", w.Code)
-	}
-}
-
-func TestGetRecordReadsLocal(t *testing.T) {
-	kv := &mockKVStore{values: map[string]string{"x": "42"}}
-	ks := handlerServer(&mockRaftClient{}, kv, nil)
-	req := httptest.NewRequest(http.MethodGet, "/record", encodeBody(t, Command{Key: "x"}))
-	w := httptest.NewRecorder()
-	ks.GetRecord(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-	resp := decodeResponse(t, w.Body.Bytes())
-	if resp.Value != "42" {
-		t.Errorf("get(x) = %q, want %q", resp.Value, "42")
-	}
-}
-
-func TestGetRecordMissingKey(t *testing.T) {
-	ks := handlerServer(&mockRaftClient{}, &mockKVStore{values: map[string]string{}}, nil)
-	req := httptest.NewRequest(http.MethodGet, "/record", encodeBody(t, Command{Key: "missing"}))
-	w := httptest.NewRecorder()
-	ks.GetRecord(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-	resp := decodeResponse(t, w.Body.Bytes())
-	if resp.Value != "" {
-		t.Errorf("missing key returned %q, want empty", resp.Value)
-	}
-}
-
-func TestSendCommandToPeerNoPeer(t *testing.T) {
-	ks := handlerServer(&mockRaftClient{}, &mockKVStore{}, map[uint64]string{})
-	_, err := ks.sendCommandToPeer(99, Command{Op: SET, Key: "k", Value: "v"})
-	if err == nil {
-		t.Error("expected error for missing peer, got nil")
-	}
-}
-
-func TestSendCommandToPeerInvalidOp(t *testing.T) {
-	ks := handlerServer(&mockRaftClient{}, &mockKVStore{}, map[uint64]string{1: "http://localhost"})
-	_, err := ks.sendCommandToPeer(1, Command{Op: "INVALID", Key: "k"})
-	if err == nil {
-		t.Error("expected error for invalid op, got nil")
 	}
 }
 
@@ -229,9 +212,9 @@ func kvTestKVAddrs(count int) map[uint64]string {
 	return addrs
 }
 
-func doKVRequest(method, baseURL string, cmd Command) (Response, int, error) {
+func doKVRequest(baseURL string, cmd Command) (Response, int, error) {
 	body, _ := json.Marshal(cmd)
-	req, err := http.NewRequest(method, baseURL+baseRecordPath, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, baseURL+baseRecordPath, bytes.NewReader(body))
 	if err != nil {
 		return Response{}, 0, err
 	}
@@ -345,25 +328,25 @@ func TestKVServerCluster(t *testing.T) {
 	}
 	leaderAddr := nodes[leaderID].kvAddr
 
-	// Phase 2: PUT entries to the leader's KVServer.
+	// Phase 2: SET entries via the leader's KVServer.
 	entries := []struct{ key, value string }{
 		{"alpha", "one"},
 		{"beta", "two"},
 		{"gamma", "three"},
 	}
 	for _, e := range entries {
-		resp, status, err := doKVRequest(http.MethodPut, leaderAddr, Command{Op: SET, Key: e.key, Value: e.value})
+		resp, status, err := doKVRequest(leaderAddr, Command{Op: SET, Key: e.key, Value: e.value})
 		if err != nil {
-			t.Fatalf("PUT %s: %v", e.key, err)
+			t.Fatalf("SET %s: %v", e.key, err)
 		}
 		if status != http.StatusOK || !resp.Success {
-			t.Fatalf("PUT %s: status=%d success=%v", e.key, status, resp.Success)
+			t.Fatalf("SET %s: status=%d success=%v", e.key, status, resp.Success)
 		}
 	}
 
 	// Phase 3: GET each key from the leader and verify.
 	for _, e := range entries {
-		resp, _, err := doKVRequest(http.MethodGet, leaderAddr, Command{Key: e.key})
+		resp, _, err := doKVRequest(leaderAddr, Command{Op: GET, Key: e.key})
 		if err != nil {
 			t.Errorf("GET %s: %v", e.key, err)
 			continue
@@ -373,17 +356,17 @@ func TestKVServerCluster(t *testing.T) {
 		}
 	}
 
-	// Phase 4: DELETE one key and verify it's gone.
-	_, status, err := doKVRequest(http.MethodDelete, leaderAddr, Command{Op: DEL, Key: "alpha"})
+	// Phase 4: DEL one key and verify it's gone.
+	_, status, err := doKVRequest(leaderAddr, Command{Op: DEL, Key: "alpha"})
 	if err != nil || status != http.StatusOK {
-		t.Fatalf("DELETE alpha: err=%v status=%d", err, status)
+		t.Fatalf("DEL alpha: err=%v status=%d", err, status)
 	}
-	resp, _, err := doKVRequest(http.MethodGet, leaderAddr, Command{Key: "alpha"})
+	resp, _, err := doKVRequest(leaderAddr, Command{Op: GET, Key: "alpha"})
 	if err != nil {
-		t.Fatalf("GET after DELETE: %v", err)
+		t.Fatalf("GET after DEL: %v", err)
 	}
 	if resp.Value != "" {
-		t.Errorf("after DELETE, GET alpha = %q, want empty", resp.Value)
+		t.Errorf("after DEL, GET alpha = %q, want empty", resp.Value)
 	}
 
 	// Phase 5: GET from a follower — entries replicate within a few heartbeats.
@@ -392,7 +375,7 @@ func TestKVServerCluster(t *testing.T) {
 		if id == leaderID {
 			continue
 		}
-		resp, _, err := doKVRequest(http.MethodGet, node.kvAddr, Command{Key: "beta"})
+		resp, _, err := doKVRequest(node.kvAddr, Command{Op: GET, Key: "beta"})
 		if err != nil {
 			t.Errorf("GET beta from follower %d: %v", id, err)
 			continue
