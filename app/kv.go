@@ -110,6 +110,7 @@ func (kv *KVMap) apply(entries []raft.RaftEntry) error {
 	for _, e := range entries {
 		command := Command{}
 		if err := json.Unmarshal(e.Payload, &command); err != nil {
+			// leader will commit nil at beginning of term and break unmarshall, drop nil payloads
 			continue
 		}
 

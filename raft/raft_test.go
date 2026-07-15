@@ -707,7 +707,6 @@ func TestLeaderSendsUpdateForCommit(t *testing.T) {
 	r.transitionLeader()
 	r.time = 100
 
-	// TODO calling loadOutboundToReady and using internal functions causes race condition in test env, need to find better workaround
 	go r.loadOutboundToReady()
 	output := <-r.Ready()
 	assert(t, nil != output, "output not nil")
