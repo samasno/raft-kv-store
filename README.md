@@ -1,4 +1,4 @@
-# raft-noob
+# raft-kv-store
 
 An educational implementation of the Raft consensus algorithm in Go. This is not production software — it's a learning project built to understand how distributed consensus works in practice.
 
