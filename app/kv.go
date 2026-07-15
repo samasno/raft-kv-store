@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/samasno/raft-kv/raft"
+	"github.com/samasno/raft-kv-store/raft"
 )
 
 type LogReader interface {

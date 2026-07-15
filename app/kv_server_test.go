@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samasno/raft-kv/raft"
-	"github.com/samasno/raft-kv/rpc"
+	"github.com/samasno/raft-kv-store/raft"
+	"github.com/samasno/raft-kv-store/rpc"
 )
 
 // --- mocks ---
@@ -29,7 +29,7 @@ type mockKVStore struct {
 	values map[string]string
 }
 
-func (m *mockKVStore) Get(key string) string             { return m.values[key] }
+func (m *mockKVStore) Get(key string) string                { return m.values[key] }
 func (m *mockKVStore) ApplyRecord(_ []raft.RaftEntry) error { return nil }
 
 // handlerServer builds a KVServer wired to httptest for handler unit tests.

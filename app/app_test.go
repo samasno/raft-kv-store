@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samasno/raft-kv/raft"
+	"github.com/samasno/raft-kv-store/raft"
 )
 
 func TestControlLoopElection(t *testing.T) {

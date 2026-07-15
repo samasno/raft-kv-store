@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/samasno/raft-kv/raft"
-	"github.com/samasno/raft-kv/rpc"
-	"github.com/samasno/raft-kv/storage"
+	"github.com/samasno/raft-kv-store/raft"
+	"github.com/samasno/raft-kv-store/rpc"
+	"github.com/samasno/raft-kv-store/storage"
 )
 
 type RaftError uint8
