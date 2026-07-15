@@ -11,7 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 
-	"github.com/samasno/raft-kv/raft"
+	"github.com/samasno/raft-kv-store/raft"
 )
 
 var jsonContentType string = "application/json"

@@ -452,10 +452,6 @@ func (r *Raft) leaderWriteNewEntries(rawEntries [][]byte) {
 }
 
 func (r *Raft) leaderHandleAppendMessageResponse(m RaftMessage) {
-	if !m.Success {
-		return
-	}
-
 	followerId := m.From
 	f := r.followTracker[followerId]
 

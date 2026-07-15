@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/samasno/raft-kv/raft"
+	"github.com/samasno/raft-kv-store/raft"
 )
 
 func TestServerRuns(t *testing.T) {

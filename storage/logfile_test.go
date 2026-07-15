@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/samasno/raft-kv/raft"
+	"github.com/samasno/raft-kv-store/raft"
 )
 
 func TestOpenLogfile(t *testing.T) {

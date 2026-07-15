@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 
-	"github.com/samasno/raft-kv/raft"
+	"github.com/samasno/raft-kv-store/raft"
 )
 
 // index structure: index u64/term u64/offset u64/length 32

@@ -8,7 +8,7 @@ import (
 	"os"
 	"path"
 
-	"github.com/samasno/raft-kv/raft"
+	"github.com/samasno/raft-kv-store/raft"
 )
 
 var _ raft.RaftLogFile = (*LogFile)(nil)
